@@ -1,0 +1,10 @@
+# Sample Project requirements.txt for SecureSBOM Scanning
+# Includes pinned packages with known CVEs, unpinned packages, and specifiers
+
+requests==2.25.0      # Known CVE-2023-32681 / GHSA-j8r2-6x86-q33q
+jinja2==2.11.2        # Pinned version with known HTML escape vuln
+urllib3==1.26.4       # Known GHSA-34jh-p97j-mpxf vulnerability
+
+fastapi               # Unpinned dependency
+packaging>=23.0       # Range specifier dependency
+pytest                # Additional unpinned test library

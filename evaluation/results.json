@@ -1,0 +1,131 @@
+{
+  "evaluation_timestamp": "2026-10-21T12:29:54.740668+00:00",
+  "total_datasets_evaluated": 5,
+  "results": [
+    {
+      "dataset_id": "dataset-1-requests",
+      "dataset_name": "CVE-2023-32681 Ground Truth (requests==2.25.0)",
+      "scan_success": true,
+      "duration_seconds": 7.0,
+      "sbom_schema_valid": true,
+      "parsed_specs_count": 1,
+      "syntax_validation_errors": 0,
+      "unresolved_dependencies": 0,
+      "raw_advisories_count": 27,
+      "canonical_vulnerabilities_count": 11,
+      "deduplication_ratio": 0.41,
+      "found_expected_cves": [
+        "CVE-2023-32681"
+      ],
+      "missing_expected_cves": [],
+      "severity_distribution": {
+        "CRITICAL": 0,
+        "HIGH": 4,
+        "MEDIUM": 7,
+        "LOW": 0,
+        "INFORMATIONAL": 0,
+        "UNKNOWN": 0
+      }
+    },
+    {
+      "dataset_id": "dataset-2-jinja2",
+      "dataset_name": "Template Injection Vulnerabilities (jinja2==2.11.2)",
+      "scan_success": true,
+      "duration_seconds": 5.18,
+      "sbom_schema_valid": true,
+      "parsed_specs_count": 1,
+      "syntax_validation_errors": 0,
+      "unresolved_dependencies": 0,
+      "raw_advisories_count": 15,
+      "canonical_vulnerabilities_count": 5,
+      "deduplication_ratio": 0.33,
+      "found_expected_cves": [
+        "CVE-2020-28493",
+        "CVE-2024-22195"
+      ],
+      "missing_expected_cves": [],
+      "severity_distribution": {
+        "CRITICAL": 0,
+        "HIGH": 2,
+        "MEDIUM": 3,
+        "LOW": 0,
+        "INFORMATIONAL": 0,
+        "UNKNOWN": 0
+      }
+    },
+    {
+      "dataset_id": "dataset-3-urllib3",
+      "dataset_name": "HTTP Parsing & Header Leaks (urllib3==1.26.4)",
+      "scan_success": true,
+      "duration_seconds": 5.68,
+      "sbom_schema_valid": true,
+      "parsed_specs_count": 1,
+      "syntax_validation_errors": 0,
+      "unresolved_dependencies": 0,
+      "raw_advisories_count": 27,
+      "canonical_vulnerabilities_count": 11,
+      "deduplication_ratio": 0.41,
+      "found_expected_cves": [
+        "CVE-2021-33503",
+        "CVE-2023-43804"
+      ],
+      "missing_expected_cves": [],
+      "severity_distribution": {
+        "CRITICAL": 0,
+        "HIGH": 6,
+        "MEDIUM": 5,
+        "LOW": 0,
+        "INFORMATIONAL": 0,
+        "UNKNOWN": 0
+      }
+    },
+    {
+      "dataset_id": "dataset-4-clean-modern",
+      "dataset_name": "Clean Modern Package (pydantic==2.8.2)",
+      "scan_success": true,
+      "duration_seconds": 3.49,
+      "sbom_schema_valid": true,
+      "parsed_specs_count": 1,
+      "syntax_validation_errors": 0,
+      "unresolved_dependencies": 0,
+      "raw_advisories_count": 0,
+      "canonical_vulnerabilities_count": 0,
+      "deduplication_ratio": 1.0,
+      "found_expected_cves": [],
+      "missing_expected_cves": [],
+      "severity_distribution": {
+        "CRITICAL": 0,
+        "HIGH": 0,
+        "MEDIUM": 0,
+        "LOW": 0,
+        "INFORMATIONAL": 0,
+        "UNKNOWN": 0
+      }
+    },
+    {
+      "dataset_id": "dataset-5-malformed-and-unresolved",
+      "dataset_name": "Malformed Syntax & Unresolvable Package Handling",
+      "scan_success": true,
+      "duration_seconds": 1.08,
+      "sbom_schema_valid": true,
+      "parsed_specs_count": 2,
+      "syntax_validation_errors": 1,
+      "unresolved_dependencies": 1,
+      "raw_advisories_count": 27,
+      "canonical_vulnerabilities_count": 11,
+      "deduplication_ratio": 0.41,
+      "found_expected_cves": [
+        "CVE-2023-32681"
+      ],
+      "missing_expected_cves": [],
+      "severity_distribution": {
+        "CRITICAL": 0,
+        "HIGH": 4,
+        "MEDIUM": 7,
+        "LOW": 0,
+        "INFORMATIONAL": 0,
+        "UNKNOWN": 0
+      }
+    }
+  ]
+}
