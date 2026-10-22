@@ -1,0 +1,277 @@
+{
+  "components": [
+    {
+      "bom-ref": "pkg:pypi/flask@1.1.2",
+      "name": "Flask",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "0"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "true"
+        }
+      ],
+      "purl": "pkg:pypi/flask@1.1.2",
+      "type": "library",
+      "version": "1.1.2"
+    },
+    {
+      "bom-ref": "pkg:pypi/jinja2@2.11.2",
+      "name": "Jinja2",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "0"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "true"
+        }
+      ],
+      "purl": "pkg:pypi/jinja2@2.11.2",
+      "type": "library",
+      "version": "2.11.2"
+    },
+    {
+      "bom-ref": "pkg:pypi/markupsafe@0.23",
+      "name": "MarkupSafe",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "1"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "false"
+        }
+      ],
+      "purl": "pkg:pypi/markupsafe@0.23",
+      "type": "library",
+      "version": "0.23"
+    },
+    {
+      "bom-ref": "pkg:pypi/pyyaml@5.3.1",
+      "name": "PyYAML",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "0"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "true"
+        }
+      ],
+      "purl": "pkg:pypi/pyyaml@5.3.1",
+      "type": "library",
+      "version": "5.3.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/werkzeug@0.15",
+      "name": "Werkzeug",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "1"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "false"
+        }
+      ],
+      "purl": "pkg:pypi/werkzeug@0.15",
+      "type": "library",
+      "version": "0.15"
+    },
+    {
+      "bom-ref": "pkg:pypi/certifi@2017.4.17",
+      "name": "certifi",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "1"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "false"
+        }
+      ],
+      "purl": "pkg:pypi/certifi@2017.4.17",
+      "type": "library",
+      "version": "2017.4.17"
+    },
+    {
+      "bom-ref": "pkg:pypi/chardet@3.0.2",
+      "name": "chardet",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "1"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "false"
+        }
+      ],
+      "purl": "pkg:pypi/chardet@3.0.2",
+      "type": "library",
+      "version": "3.0.2"
+    },
+    {
+      "bom-ref": "pkg:pypi/click@5.1",
+      "name": "click",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "1"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "false"
+        }
+      ],
+      "purl": "pkg:pypi/click@5.1",
+      "type": "library",
+      "version": "5.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/idna@2.5",
+      "name": "idna",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "1"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "false"
+        }
+      ],
+      "purl": "pkg:pypi/idna@2.5",
+      "type": "library",
+      "version": "2.5"
+    },
+    {
+      "bom-ref": "pkg:pypi/itsdangerous@0.24",
+      "name": "itsdangerous",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "1"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "false"
+        }
+      ],
+      "purl": "pkg:pypi/itsdangerous@0.24",
+      "type": "library",
+      "version": "0.24"
+    },
+    {
+      "bom-ref": "pkg:pypi/requests@2.25.1",
+      "name": "requests",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "0"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "true"
+        }
+      ],
+      "purl": "pkg:pypi/requests@2.25.1",
+      "type": "library",
+      "version": "2.25.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/urllib3@1.26.4",
+      "name": "urllib3",
+      "properties": [
+        {
+          "name": "securesbom:depth",
+          "value": "0"
+        },
+        {
+          "name": "securesbom:is_direct",
+          "value": "true"
+        }
+      ],
+      "purl": "pkg:pypi/urllib3@1.26.4",
+      "type": "library",
+      "version": "1.26.4"
+    }
+  ],
+  "dependencies": [
+    {
+      "dependsOn": [
+        "pkg:pypi/flask@1.1.2",
+        "pkg:pypi/jinja2@2.11.2",
+        "pkg:pypi/pyyaml@5.3.1",
+        "pkg:pypi/requests@2.25.1",
+        "pkg:pypi/urllib3@1.26.4"
+      ],
+      "ref": "BomRef.9001999967556853.5132312916629096"
+    },
+    {
+      "ref": "pkg:pypi/certifi@2017.4.17"
+    },
+    {
+      "ref": "pkg:pypi/chardet@3.0.2"
+    },
+    {
+      "ref": "pkg:pypi/click@5.1"
+    },
+    {
+      "ref": "pkg:pypi/flask@1.1.2"
+    },
+    {
+      "ref": "pkg:pypi/idna@2.5"
+    },
+    {
+      "ref": "pkg:pypi/itsdangerous@0.24"
+    },
+    {
+      "ref": "pkg:pypi/jinja2@2.11.2"
+    },
+    {
+      "ref": "pkg:pypi/markupsafe@0.23"
+    },
+    {
+      "ref": "pkg:pypi/pyyaml@5.3.1"
+    },
+    {
+      "ref": "pkg:pypi/requests@2.25.1"
+    },
+    {
+      "ref": "pkg:pypi/urllib3@1.26.4"
+    },
+    {
+      "ref": "pkg:pypi/werkzeug@0.15"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "bom-ref": "BomRef.9001999967556853.5132312916629096",
+      "name": "Demo Vulnerable App",
+      "type": "application",
+      "version": "1.0.0"
+    },
+    "timestamp": "2026-09-24T07:10:43.936302+00:00",
+    "tools": [
+      {
+        "name": "SecureSBOM Scanner",
+        "vendor": "SecureSBOM",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "serialNumber": "urn:uuid:38f1dc7b-27d5-4446-9d77-a5b6d0fc0f53",
+  "version": 1,
+  "$schema": "http://cyclonedx.org/schema/bom-1.4.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.4"
+}
