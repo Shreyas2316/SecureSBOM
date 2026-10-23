@@ -72,6 +72,23 @@ async def root(request: Request):
     }
 
 
+# Mount AI routes (assessment, safer alternatives, reports, monitoring)
+try:
+    import sys
+    backend_dir = os.path.abspath(os.path.dirname(__file__))
+    if backend_dir not in sys.path:
+        sys.path.insert(0, backend_dir)
+    from app.models import ai_models as _ai_models  # noqa: F401
+    from app.database import init_db as _init_db
+    _init_db()
+    from app.api.routes import router as v1_router
+    from app.api.ai_routes import router as ai_router
+    app.include_router(v1_router)
+    app.include_router(ai_router)
+except Exception as e:
+    logger.warning("Could not mount AI router into backend.main: %s", e)
+
+
 @app.post("/scan", response_model=ScanResponse, summary="Upload requirements.txt and Run Vulnerability Scan")
 async def scan_requirements(
     file: Optional[UploadFile] = File(None, description="requirements.txt file to upload and scan"),

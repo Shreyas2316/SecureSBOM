@@ -17,13 +17,21 @@ export default function SbomViewer({ sbomData, components }) {
 
   const handleDownload = () => {
     const jsonStr = JSON.stringify(sbomData?.bom_json || {}, null, 2);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = 'bom.json';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      try {
+        document.body.removeChild(a);
+      } catch {
+        // ignore
+      }
+      URL.revokeObjectURL(url);
+    }, 4000);
   };
 
   const handleCopy = () => {

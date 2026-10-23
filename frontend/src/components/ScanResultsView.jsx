@@ -25,22 +25,18 @@ export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate
   const [expandedRows, setExpandedRows] = useState(new Set());
 
   const report = scanData?.report || scanData;
-  if (!report) {
-    return (
-      <div className="card" style={{ textAlign: "center", padding: "64px" }}>
-        <p style={{ color: "var(--text-muted)", marginBottom: "16px" }}>No active scan results loaded.</p>
-        <button className="btn btn-primary" onClick={() => onNavigate("new_scan")}>
-          Initiate New Scan
-        </button>
-      </div>
-    );
-  }
-
-  const scanId = report.scan_id || scanData?.scan_id || "";
-  const summary = report.summary || {};
-  const canonicalVulns = report.canonical_vulnerabilities || [];
-  const sevCounts = summary.vulnerabilities_by_severity || {};
-  const sourceStatus = report.source_status || {};
+  const summary = report?.summary || {};
+  const scanId = report?.scan_id || summary?.scan_id || scanData?.scan_id || "";
+  const canonicalVulns = report?.canonical_vulnerabilities || report?.vulnerabilities || [];
+  const sevCounts = summary.vulnerabilities_by_severity || {
+    CRITICAL: summary.critical_count || 0,
+    HIGH: summary.high_count || 0,
+    MEDIUM: summary.medium_count || 0,
+    LOW: summary.low_count || 0,
+    INFORMATIONAL: summary.info_count || 0,
+    UNKNOWN: summary.unknown_count || 0,
+  };
+  const sourceStatus = report?.source_status || {};
 
   // Donut chart dataset
   const chartData = [
@@ -62,13 +58,15 @@ export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate
 
   // Filter vulnerabilities
   const filteredVulns = useMemo(() => {
+    if (!report) return [];
     return canonicalVulns.filter((vuln) => {
       // Severity filter
       if (severityFilter !== "ALL" && vuln.severity !== severityFilter) {
         return false;
       }
       // Has fix filter
-      if (hasFixFilter && (!vuln.fixed_versions || vuln.fixed_versions.length === 0)) {
+      const hasFix = vuln.fixed_version || (vuln.fixed_versions && vuln.fixed_versions.length > 0);
+      if (hasFixFilter && !hasFix) {
         return false;
       }
       // Source filter
@@ -81,14 +79,27 @@ export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate
         const matchesId = vuln.canonical_id?.toLowerCase().includes(query);
         const matchesAlias = vuln.aliases?.some((a) => a.toLowerCase().includes(query));
         const matchesSummary = vuln.summary?.toLowerCase().includes(query);
-        const matchesPkg = vuln.affected_packages?.some((p) =>
+        const matchesPkg = vuln.affected_component_name?.toLowerCase().includes(query) || vuln.affected_packages?.some((p) =>
           p.package_name?.toLowerCase().includes(query)
         );
         return matchesId || matchesAlias || matchesSummary || matchesPkg;
       }
       return true;
     });
-  }, [canonicalVulns, severityFilter, hasFixFilter, sourceFilter, searchQuery]);
+  }, [report, canonicalVulns, severityFilter, hasFixFilter, sourceFilter, searchQuery]);
+
+  if (!report) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: "64px" }}>
+        <p style={{ color: "var(--text-muted)", marginBottom: "16px" }}>No active scan results loaded.</p>
+        <button className="btn btn-primary" onClick={() => onNavigate("new_scan")}>
+          Initiate New Scan
+        </button>
+      </div>
+    );
+  }
+
+  const safeScanIdStr = String(scanId || "");
 
   return (
     <div>
@@ -111,7 +122,7 @@ export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => downloadFileAsJson(getDownloadBomUrl(scanId), `cyclonedx-bom-${scanId ? scanId.slice(0, 8) : "latest"}.json`)}
+            onClick={() => downloadFileAsJson(getDownloadBomUrl(scanId), `cyclonedx-bom-${safeScanIdStr ? safeScanIdStr.slice(0, 8) : "latest"}.json`)}
           >
             <Download size={16} />
             <span>Download CycloneDX SBOM</span>
@@ -119,7 +130,7 @@ export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => downloadFileAsJson(getDownloadReportUrl(scanId), `securesbom-report-${scanId ? scanId.slice(0, 8) : "latest"}.json`)}
+            onClick={() => downloadFileAsJson(getDownloadReportUrl(scanId), `securesbom-report-${safeScanIdStr ? safeScanIdStr.slice(0, 8) : "latest"}.json`)}
           >
             <Download size={16} />
             <span>Download Report JSON</span>
@@ -353,7 +364,9 @@ export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate
                   const rowId = vuln.canonical_id || vuln.vuln_id || `vuln-${idx}`;
                   const isExpanded = expandedRows.has(rowId);
                   const pkgs = Array.isArray(vuln.affected_packages) ? vuln.affected_packages : [];
-                  const pkgText = pkgs.map((p) => `${p.package_name || p.name || "Component"}@${p.version || ""}`).join(", ") || (vuln.package_name ? `${vuln.package_name}@${vuln.version || ""}` : "Component");
+                  const pkgText = vuln.affected_component_name
+                    ? `${vuln.affected_component_name}@${vuln.affected_component_version || ""}`
+                    : (pkgs.map((p) => `${p.package_name || p.name || "Component"}@${p.version || ""}`).join(", ") || (vuln.package_name ? `${vuln.package_name}@${vuln.version || ""}` : "Component"));
 
                   const displayCvss = () => {
                     if (vuln.cvss_score === null || vuln.cvss_score === undefined || vuln.cvss_score === "") {
@@ -421,13 +434,17 @@ export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate
                           </span>
                         </td>
                         <td>
-                          {vuln.fixed_versions && Array.isArray(vuln.fixed_versions) && vuln.fixed_versions.length > 0 ? (
+                          {vuln.fixed_version ? (
+                            <span className="badge badge-success">
+                              &gt;= {vuln.fixed_version}
+                            </span>
+                          ) : (vuln.fixed_versions && Array.isArray(vuln.fixed_versions) && vuln.fixed_versions.length > 0 ? (
                             <span className="badge badge-success">
                               &gt;= {vuln.fixed_versions[0]}
                             </span>
                           ) : (
                             <span style={{ color: "var(--text-light)", fontSize: "0.78rem" }}>None documented</span>
-                          )}
+                          ))}
                         </td>
                         <td style={{ maxWidth: "340px" }}>
                           <p style={{

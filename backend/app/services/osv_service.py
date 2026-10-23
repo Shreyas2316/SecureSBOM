@@ -126,7 +126,7 @@ def clean_summary_and_details(vuln_raw: Dict[str, Any], pkg_name: str = "") -> T
 def extract_severity_and_cvss(vuln_raw: Dict[str, Any]) -> Tuple[Optional[float], Optional[str], str]:
     """
     Extract CVSS score, CVSS vector, and severity rating from OSV data.
-    Does NOT invent scores — returns None if not present in OSV payload.
+    Computes CVSS score from vector when score is not explicitly provided.
     """
     cvss_score = None
     cvss_vector = None
@@ -138,19 +138,67 @@ def extract_severity_and_cvss(vuln_raw: Dict[str, Any]) -> Tuple[Optional[float]
             if isinstance(sev, dict):
                 s_type = sev.get("type", "")
                 s_score = sev.get("score", "")
-                if "CVSS" in s_type:
+                if "CVSS" in s_type and s_score:
                     cvss_vector = s_score
                     break
 
     db_specific = vuln_raw.get("database_specific", {})
     if isinstance(db_specific, dict):
         if "severity" in db_specific and db_specific["severity"]:
-            severity_rating = str(db_specific["severity"]).upper()
+            raw_s = str(db_specific["severity"]).upper()
+            if "MODERATE" in raw_s:
+                severity_rating = "MEDIUM"
+            elif "CRITICAL" in raw_s:
+                severity_rating = "CRITICAL"
+            elif "HIGH" in raw_s:
+                severity_rating = "HIGH"
+            elif "LOW" in raw_s:
+                severity_rating = "LOW"
+            elif "INFO" in raw_s:
+                severity_rating = "INFORMATIONAL"
+            else:
+                severity_rating = raw_s
         if "cvss" in db_specific:
             cvss_info = db_specific["cvss"]
             if isinstance(cvss_info, dict):
                 cvss_score = cvss_info.get("score")
                 cvss_vector = cvss_info.get("vector_string") or cvss_vector
+
+    # Also check ecosystem_specific
+    eco_specific = vuln_raw.get("ecosystem_specific", {})
+    if isinstance(eco_specific, dict) and severity_rating == "UNKNOWN":
+        eco_sev = str(eco_specific.get("severity", "")).upper()
+        if "MODERATE" in eco_sev:
+            severity_rating = "MEDIUM"
+        elif "CRITICAL" in eco_sev:
+            severity_rating = "CRITICAL"
+        elif "HIGH" in eco_sev:
+            severity_rating = "HIGH"
+        elif "LOW" in eco_sev:
+            severity_rating = "LOW"
+
+    # If CVSS vector is present but numeric score is missing, calculate score from vector
+    if cvss_score is None and cvss_vector:
+        try:
+            from backend.severity import parse_cvss_vector_or_score
+            parsed_score, _, _ = parse_cvss_vector_or_score(cvss_vector)
+            if parsed_score is not None:
+                cvss_score = parsed_score
+        except Exception:
+            pass
+
+    # If numeric score exists, derive standard severity rating if still unknown
+    if cvss_score is not None and severity_rating == "UNKNOWN":
+        if cvss_score >= 9.0:
+            severity_rating = "CRITICAL"
+        elif cvss_score >= 7.0:
+            severity_rating = "HIGH"
+        elif cvss_score >= 4.0:
+            severity_rating = "MEDIUM"
+        elif cvss_score >= 0.1:
+            severity_rating = "LOW"
+        else:
+            severity_rating = "INFORMATIONAL"
 
     return cvss_score, cvss_vector, severity_rating
 

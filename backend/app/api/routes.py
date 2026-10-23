@@ -23,6 +23,7 @@ router = APIRouter()
 @router.get("/")
 def api_root():
     return {
+        "service": "SecureSBOM API",
         "message": "SecureSBOM API Service",
         "version": "1.0.0",
         "status": "online",
@@ -156,17 +157,43 @@ async def run_scan(request: ScanRequest, db: Session = Depends(get_db)):
             db.commit()
             db.refresh(vuln_orm)
         else:
-            # Update mutable fields if needed
-            vuln_orm.aliases_json = v.get("aliases", [])
-            vuln_orm.sources_json = v.get("sources", [])
-            vuln_orm.severity_sources_json = v.get("severity_sources", [])
-            vuln_orm.affected_range = v.get("affected_range")
-            vuln_orm.fixed_version = v.get("fixed_version")
+            # Update fields with latest correlated intelligence
+            if v.get("cve_id"):
+                vuln_orm.cve_id = v.get("cve_id")
+            vuln_orm.aliases_json = v.get("aliases", []) or vuln_orm.aliases_json
+            vuln_orm.sources_json = v.get("sources", []) or vuln_orm.sources_json
+            if v.get("summary") and (not vuln_orm.summary or vuln_orm.summary == "Security advisory for component"):
+                vuln_orm.summary = v.get("summary")
+            if v.get("details"):
+                vuln_orm.details = v.get("details")
+            if v.get("cvss_score") is not None:
+                vuln_orm.cvss_score = v.get("cvss_score")
+            if v.get("cvss_vector"):
+                vuln_orm.cvss_vector = v.get("cvss_vector")
+            if v.get("severity") and v.get("severity") != "UNKNOWN":
+                vuln_orm.severity = v.get("severity")
+            elif vuln_orm.severity == "UNKNOWN" and v.get("severity"):
+                vuln_orm.severity = v.get("severity")
+            vuln_orm.severity_sources_json = v.get("severity_sources", []) or vuln_orm.severity_sources_json
+            if v.get("priority_tier"):
+                vuln_orm.priority_tier = v.get("priority_tier")
+            if v.get("affected_range"):
+                vuln_orm.affected_range = v.get("affected_range")
+            if v.get("fixed_version"):
+                vuln_orm.fixed_version = v.get("fixed_version")
+            if v.get("references"):
+                vuln_orm.references_json = v.get("references")
             db.commit()
 
-        # Link to Scan & Component
-        comp_norm = v["component_normalized_name"]
-        comp_id = component_orm_map.get(comp_norm) or list(component_orm_map.values())[0]
+        # Link to Scan & Component accurately
+        comp_norm = v.get("component_normalized_name", "").lower().replace("_", "-")
+        comp_id = None
+        for c_orm in db_components:
+            if c_orm.name.lower().replace("_", "-") == comp_norm or c_orm.name.lower() == v.get("affected_component_name", "").lower():
+                comp_id = c_orm.id
+                break
+        if comp_id is None:
+            comp_id = component_orm_map.get(comp_norm) or list(component_orm_map.values())[0]
 
         scan_v = ScanVulnerability(
             scan_id=scan.id,
@@ -180,20 +207,20 @@ async def run_scan(request: ScanRequest, db: Session = Depends(get_db)):
             canonical_id=vuln_orm.canonical_id,
             osv_id=vuln_orm.osv_id or vuln_orm.canonical_id,
             cve_id=vuln_orm.cve_id,
-            aliases=v.get("aliases", []),
-            sources=v.get("sources", []),
-            summary=vuln_orm.summary,
-            details=vuln_orm.details,
-            cvss_score=vuln_orm.cvss_score,
-            cvss_vector=vuln_orm.cvss_vector,
-            severity=vuln_orm.severity,
-            severity_sources=v.get("severity_sources", []),
-            priority_tier=vuln_orm.priority_tier,
-            affected_component_name=v["affected_component_name"],
-            affected_component_version=v["affected_component_version"],
-            affected_range=v.get("affected_range"),
-            fixed_version=v.get("fixed_version"),
-            references=vuln_orm.references_json or []
+            aliases=v.get("aliases", []) or vuln_orm.aliases_json or [],
+            sources=v.get("sources", []) or vuln_orm.sources_json or [],
+            summary=v.get("summary") or vuln_orm.summary,
+            details=v.get("details") or vuln_orm.details,
+            cvss_score=v.get("cvss_score") if v.get("cvss_score") is not None else vuln_orm.cvss_score,
+            cvss_vector=v.get("cvss_vector") or vuln_orm.cvss_vector,
+            severity=v.get("severity") if v.get("severity") != "UNKNOWN" else vuln_orm.severity,
+            severity_sources=v.get("severity_sources", []) or vuln_orm.severity_sources_json or [],
+            priority_tier=v.get("priority_tier") or vuln_orm.priority_tier,
+            affected_component_name=v.get("affected_component_name"),
+            affected_component_version=v.get("affected_component_version"),
+            affected_range=v.get("affected_range") or vuln_orm.affected_range,
+            fixed_version=v.get("fixed_version") or vuln_orm.fixed_version,
+            references=v.get("references", []) or vuln_orm.references_json or []
         ))
 
     db.commit()

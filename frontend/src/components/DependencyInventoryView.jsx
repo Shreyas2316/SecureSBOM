@@ -19,26 +19,21 @@ export default function DependencyInventoryView({ scanData, onNavigate }) {
   const [copiedPurl, setCopiedPurl] = useState(null);
 
   const report = scanData?.report || scanData;
-  if (!report) {
-    return (
-      <div className="card" style={{ textAlign: "center", padding: "64px" }}>
-        <p style={{ color: "var(--text-muted)", marginBottom: "16px" }}>No dependency inventory available.</p>
-        <button className="btn btn-primary" onClick={() => onNavigate("new_scan")}>
-          Initiate Scan
-        </button>
-      </div>
-    );
-  }
-
-  const scanId = report.scan_id || scanData?.scan_id || "";
-  const dependencies = report.dependencies || [];
-  const packageVulns = report.vulnerabilities || [];
+  const scanId = scanData?.scan_id || scanData?.id || report?.scan_id || report?.id || report?.summary?.scan_id;
+  const safeScanIdStr = String(scanId || "");
+  const dependencies = report?.dependencies || report?.components || [];
+  const packageVulns = report?.vulnerabilities || [];
 
   // Map package vulnerabilities
   const vulnCountsByPkg = useMemo(() => {
+    if (!report) return {};
     const map = {};
     for (const pv of packageVulns) {
-      map[pv.package_name] = (pv.vulnerabilities || []).length;
+      if (pv.package_name && Array.isArray(pv.vulnerabilities)) {
+        map[pv.package_name] = pv.vulnerabilities.length;
+      } else if (pv.affected_component_name) {
+        map[pv.affected_component_name] = (map[pv.affected_component_name] || 0) + 1;
+      }
     }
     for (const cv of report.canonical_vulnerabilities || []) {
       for (const ap of cv.affected_packages || []) {
@@ -51,6 +46,7 @@ export default function DependencyInventoryView({ scanData, onNavigate }) {
   }, [packageVulns, report]);
 
   const filteredDeps = useMemo(() => {
+    if (!report) return [];
     return dependencies.filter((dep) => {
       if (typeFilter === "DIRECT" && !dep.is_direct) return false;
       if (typeFilter === "TRANSITIVE" && dep.is_direct) return false;
@@ -60,7 +56,18 @@ export default function DependencyInventoryView({ scanData, onNavigate }) {
       }
       return true;
     });
-  }, [dependencies, typeFilter, searchQuery]);
+  }, [report, dependencies, typeFilter, searchQuery]);
+
+  if (!report) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: "64px" }}>
+        <p style={{ color: "var(--text-muted)", marginBottom: "16px" }}>No dependency inventory available.</p>
+        <button className="btn btn-primary" onClick={() => onNavigate("new_scan")}>
+          Initiate Scan
+        </button>
+      </div>
+    );
+  }
 
   const handleCopyPurl = (purl) => {
     navigator.clipboard.writeText(purl);
@@ -83,7 +90,7 @@ export default function DependencyInventoryView({ scanData, onNavigate }) {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => downloadFileAsJson(getDownloadBomUrl(scanId), `cyclonedx-bom-${scanId ? scanId.slice(0, 8) : "latest"}.json`)}
+            onClick={() => downloadFileAsJson(getDownloadBomUrl(scanId), `cyclonedx-bom-${safeScanIdStr ? safeScanIdStr.slice(0, 8) : "latest"}.json`)}
           >
             <Download size={16} />
             <span>Export CycloneDX SBOM</span>

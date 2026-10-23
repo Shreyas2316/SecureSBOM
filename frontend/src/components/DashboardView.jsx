@@ -254,7 +254,7 @@ export default function DashboardView({ onNavigate, onSelectScan, latestScan }) 
                         <button
                           type="button"
                           className="btn btn-secondary btn-sm"
-                          onClick={() => downloadFileAsJson(getDownloadBomUrl(scan.id), `cyclonedx-bom-${scan.id.slice(0, 8)}.json`)}
+                          onClick={() => downloadFileAsJson(getDownloadBomUrl(scan.id), `cyclonedx-bom-${String(scan.id || scan.scan_id || "").slice(0, 8)}.json`)}
                           title="Download CycloneDX SBOM JSON"
                         >
                           <Download size={13} />

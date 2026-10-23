@@ -7,6 +7,10 @@ import ScanResultsView from "../components/ScanResultsView";
 import VulnDetailModal from "../components/VulnDetailModal";
 import DependencyInventoryView from "../components/DependencyInventoryView";
 import ScanHistoryView from "../components/ScanHistoryView";
+import AIEmergingVulnView from "../components/AIEmergingVulnView";
+import SaferAlternativesView from "../components/SaferAlternativesView";
+import ReportsView from "../components/ReportsView";
+import MonitoringStatusView from "../components/MonitoringStatusView";
 import { fetchScanById, fetchScanHistory } from "../api";
 import { CheckCircle2, AlertCircle, Info } from "lucide-react";
 
@@ -29,10 +33,12 @@ export default function ScannerApp() {
     fetchScanHistory(1)
       .then((data) => {
         if (data.scans && data.scans.length > 0) {
-          const latestId = data.scans[0].id;
-          fetchScanById(latestId)
-            .then((report) => setActiveScan({ report }))
-            .catch(() => {});
+          const latestId = data.scans[0].id || data.scans[0].scan_id;
+          if (latestId) {
+            fetchScanById(latestId)
+              .then((report) => setActiveScan({ report }))
+              .catch(() => {});
+          }
         }
       })
       .catch(() => {});
@@ -41,7 +47,11 @@ export default function ScannerApp() {
   const handleScanComplete = (scanResponse) => {
     setActiveScan(scanResponse);
     setActiveTab("results");
-    const count = scanResponse.report?.summary?.total_canonical_vulnerabilities || 0;
+    const count = scanResponse.report?.summary?.total_canonical_vulnerabilities
+      || scanResponse.summary?.unique_vuln_count
+      || scanResponse.summary?.vuln_count
+      || scanResponse.vulnerabilities?.length
+      || 0;
     addToast(
       `Scan completed successfully! ${count} canonical vulnerabilities discovered.`,
       "success"
@@ -53,7 +63,8 @@ export default function ScannerApp() {
       const report = await fetchScanById(scanId);
       setActiveScan({ report });
       setActiveTab("results");
-      addToast(`Loaded scan session '${report.manifest_name}'`, "info");
+      const name = report.manifest_name || report.project_name || report.summary?.project_name || "Python Project";
+      addToast(`Loaded scan session '${name}'`, "info");
     } catch (err) {
       addToast(err.message || "Failed to load scan details", "error");
     }
@@ -74,7 +85,10 @@ export default function ScannerApp() {
             addToast("Tenant user context switched", "info");
             fetchScanHistory(1).then((data) => {
               if (data.scans && data.scans.length > 0) {
-                fetchScanById(data.scans[0].id).then((rep) => setActiveScan({ report: rep }));
+                const latestId = data.scans[0].id || data.scans[0].scan_id;
+                if (latestId) {
+                  fetchScanById(latestId).then((rep) => setActiveScan({ report: rep })).catch(() => {});
+                }
               } else {
                 setActiveScan(null);
               }
@@ -110,11 +124,27 @@ export default function ScannerApp() {
             />
           )}
 
+          {activeTab === "ai_vulns" && (
+            <AIEmergingVulnView onNavigate={setActiveTab} />
+          )}
+
+          {activeTab === "alternatives" && (
+            <SaferAlternativesView activeScan={activeScan} />
+          )}
+
+          {activeTab === "reports" && (
+            <ReportsView activeScan={activeScan} />
+          )}
+
           {activeTab === "history" && (
             <ScanHistoryView
               onSelectScan={handleSelectScanById}
               onNavigate={setActiveTab}
             />
+          )}
+
+          {activeTab === "monitoring" && (
+            <MonitoringStatusView />
           )}
         </main>
       </div>
