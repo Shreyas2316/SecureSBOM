@@ -74,9 +74,11 @@ export default function VulnDetailModal({ vuln, onClose }) {
   // Safe affected packages list
   const affectedPkgs = Array.isArray(vuln.affected_packages) && vuln.affected_packages.length > 0
     ? vuln.affected_packages
-    : vuln.package_name
-      ? [{ package_name: vuln.package_name, version: vuln.version || "All versions", affected_ranges: vuln.affected_versions || [] }]
-      : [];
+    : vuln.affected_component_name
+      ? [{ package_name: vuln.affected_component_name, version: vuln.affected_component_version || "All versions", affected_ranges: vuln.affected_range ? [vuln.affected_range] : [] }]
+      : vuln.package_name
+        ? [{ package_name: vuln.package_name, version: vuln.version || "All versions", affected_ranges: vuln.affected_versions || [] }]
+        : [];
 
   // Safe fixed versions list
   const fixedVersions = Array.isArray(vuln.fixed_versions) && vuln.fixed_versions.length > 0

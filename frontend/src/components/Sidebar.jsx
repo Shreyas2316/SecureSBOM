@@ -8,7 +8,11 @@ import {
   Boxes, 
   FileText, 
   ExternalLink,
-  ArrowLeft
+  ArrowLeft,
+  Brain,
+  GitCompare,
+  FileSpreadsheet,
+  Activity
 } from "lucide-react";
 
 export default function Sidebar({ activeTab, onSelectTab, lastScanAvailable }) {
@@ -32,7 +36,7 @@ export default function Sidebar({ activeTab, onSelectTab, lastScanAvailable }) {
           onClick={() => onSelectTab("dashboard")}
         >
           <LayoutDashboard size={18} />
-          <span>Dashboard</span>
+          <span>Overview</span>
         </button>
 
         <button
@@ -50,7 +54,28 @@ export default function Sidebar({ activeTab, onSelectTab, lastScanAvailable }) {
           style={{ opacity: lastScanAvailable ? 1 : 0.6 }}
         >
           <FileText size={18} />
-          <span>Active Results</span>
+          <span>Verified Vulnerabilities</span>
+        </button>
+
+        <button
+          className={`nav-item ${activeTab === "ai_vulns" ? "active" : ""}`}
+          onClick={() => onSelectTab("ai_vulns")}
+          style={{
+            borderLeft: activeTab === "ai_vulns" ? "3px solid #00F5FF" : "none",
+          }}
+        >
+          <Brain size={18} style={{ color: "#00F5FF" }} />
+          <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            AI Emerging Vulns
+            <span style={{
+              fontSize: "0.65rem",
+              background: "rgba(0,245,255,0.15)",
+              color: "#00F5FF",
+              padding: "1px 5px",
+              borderRadius: "4px",
+              fontWeight: 700
+            }}>AI</span>
+          </span>
         </button>
 
         <button
@@ -64,11 +89,39 @@ export default function Sidebar({ activeTab, onSelectTab, lastScanAvailable }) {
         </button>
 
         <button
+          className={`nav-item ${activeTab === "alternatives" ? "active" : ""}`}
+          onClick={() => onSelectTab("alternatives")}
+          disabled={!lastScanAvailable}
+          style={{ opacity: lastScanAvailable ? 1 : 0.6 }}
+        >
+          <GitCompare size={18} />
+          <span>Safer Alternatives</span>
+        </button>
+
+        <button
+          className={`nav-item ${activeTab === "reports" ? "active" : ""}`}
+          onClick={() => onSelectTab("reports")}
+          disabled={!lastScanAvailable}
+          style={{ opacity: lastScanAvailable ? 1 : 0.6 }}
+        >
+          <FileSpreadsheet size={18} />
+          <span>Reports</span>
+        </button>
+
+        <button
           className={`nav-item ${activeTab === "history" ? "active" : ""}`}
           onClick={() => onSelectTab("history")}
         >
           <History size={18} />
           <span>Scan History</span>
+        </button>
+
+        <button
+          className={`nav-item ${activeTab === "monitoring" ? "active" : ""}`}
+          onClick={() => onSelectTab("monitoring")}
+        >
+          <Activity size={18} style={{ color: "#00FF88" }} />
+          <span>Monitoring Status</span>
         </button>
 
         <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid var(--border-sidebar)" }}>

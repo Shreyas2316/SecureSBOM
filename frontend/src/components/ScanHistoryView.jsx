@@ -79,10 +79,26 @@ export default function ScanHistoryView({ onSelectScan, onNavigate }) {
                 </tr>
               </thead>
               <tbody>
-                {scans.map((s) => {
-                  const sevs = s.severity_counts || {};
+                {scans.map((s, idx) => {
+                  const id = s.id || String(s.scan_id || `scan-${idx}`);
+                  const idStr = String(id);
+                  const sevs = s.severity_counts || {
+                    CRITICAL: s.critical_count || 0,
+                    HIGH: s.high_count || 0,
+                    MEDIUM: s.medium_count || 0,
+                    LOW: s.low_count || 0,
+                    INFORMATIONAL: s.info_count || 0,
+                    UNKNOWN: s.unknown_count || 0
+                  };
+                  const manifestName = s.manifest_name || s.project_name || "requirements.txt";
+                  const totalScanned = s.total_scanned ?? s.total_deps ?? 0;
+                  const directDeps = s.direct_deps_count ?? s.direct_deps ?? 0;
+                  const transDeps = s.transitive_deps_count ?? s.transitive_deps ?? 0;
+                  const canonCount = s.canonical_vulns_count ?? s.unique_vuln_count ?? s.vuln_count ?? 0;
+                  const rawCount = s.raw_advisories_count ?? s.advisory_record_count ?? 0;
+
                   return (
-                    <tr key={s.id}>
+                    <tr key={id}>
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                           <Clock size={14} style={{ color: "var(--text-muted)" }} />
@@ -93,18 +109,18 @@ export default function ScanHistoryView({ onSelectScan, onNavigate }) {
                       </td>
                       <td>
                         <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600 }}>
-                          {s.manifest_name}
+                          {manifestName}
                         </span>
                       </td>
                       <td>
-                        {s.total_scanned} ({s.direct_deps_count} direct, {s.transitive_deps_count} transitive)
+                        {totalScanned} ({directDeps} direct, {transDeps} transitive)
                       </td>
                       <td>
                         <span className="badge badge-critical">
-                          {s.canonical_vulns_count} Unique Findings
+                          {canonCount} Unique Findings
                         </span>
                         <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "2px" }}>
-                          ({s.raw_advisories_count} raw records)
+                          ({rawCount} raw records)
                         </div>
                       </td>
                       <td>
@@ -113,7 +129,7 @@ export default function ScanHistoryView({ onSelectScan, onNavigate }) {
                           {sevs.HIGH > 0 && <span className="badge badge-high" style={{ fontSize: "0.7rem" }}>H: {sevs.HIGH}</span>}
                           {sevs.MEDIUM > 0 && <span className="badge badge-medium" style={{ fontSize: "0.7rem" }}>M: {sevs.MEDIUM}</span>}
                           {sevs.LOW > 0 && <span className="badge badge-low" style={{ fontSize: "0.7rem" }}>L: {sevs.LOW}</span>}
-                          {s.canonical_vulns_count === 0 && <span className="badge badge-success" style={{ fontSize: "0.7rem" }}>Clean</span>}
+                          {canonCount === 0 && <span className="badge badge-success" style={{ fontSize: "0.7rem" }}>Clean</span>}
                         </div>
                       </td>
                       <td>
@@ -123,14 +139,14 @@ export default function ScanHistoryView({ onSelectScan, onNavigate }) {
                         <div style={{ display: "flex", gap: "6px" }}>
                           <button
                             className="btn btn-secondary btn-sm"
-                            onClick={() => onSelectScan(s.id)}
+                            onClick={() => onSelectScan(s.scan_id || id)}
                           >
                             <span>Open</span>
                           </button>
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            onClick={() => downloadFileAsJson(getDownloadBomUrl(s.id), `cyclonedx-bom-${s.id.slice(0, 8)}.json`)}
+                            onClick={() => downloadFileAsJson(getDownloadBomUrl(s.scan_id || id), `cyclonedx-bom-${idStr.slice(0, 8)}.json`)}
                             title="Download CycloneDX SBOM JSON"
                           >
                             <Download size={13} />

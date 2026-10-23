@@ -6,9 +6,13 @@ export default function Navbar({ activeTab, onUserChange }) {
   const titles = {
     dashboard: "Security Overview",
     new_scan: "Initiate Dependency Scan",
-    results: "Vulnerability Scan Report",
+    results: "Verified Vulnerability Findings (Deterministic OSV/NVD)",
     inventory: "Software Bill of Materials (SBOM) Inventory",
+    ai_vulns: "AI-Detected Emerging Vulnerabilities (Separate AI Category)",
+    alternatives: "Safer Dependency Alternatives & Remediation Guidance",
+    reports: "Security & Vulnerability Compliance Reports",
     history: "Scan History & Persistence Log",
+    monitoring: "Continuous Vulnerability Monitoring & Advisory Feeds",
   };
 
   const handleUserSelect = (e) => {

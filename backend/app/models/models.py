@@ -8,6 +8,7 @@ def utc_now():
 
 class Project(Base):
     __tablename__ = "projects"
+    __table_args__ = {"extend_existing": True}
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
@@ -17,6 +18,7 @@ class Project(Base):
 
 class Scan(Base):
     __tablename__ = "scans"
+    __table_args__ = {"extend_existing": True}
 
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
@@ -45,6 +47,7 @@ class Scan(Base):
 
 class Component(Base):
     __tablename__ = "components"
+    __table_args__ = {"extend_existing": True}
 
     id = Column(Integer, primary_key=True, index=True)
     scan_id = Column(Integer, ForeignKey("scans.id"), nullable=False)
@@ -60,6 +63,7 @@ class Component(Base):
 
 class Vulnerability(Base):
     __tablename__ = "vulnerabilities"
+    __table_args__ = {"extend_existing": True}
 
     id = Column(Integer, primary_key=True, index=True)
     canonical_id = Column(String(100), unique=True, index=True, nullable=False)
@@ -82,6 +86,7 @@ class Vulnerability(Base):
 
 class ScanVulnerability(Base):
     __tablename__ = "scan_vulnerabilities"
+    __table_args__ = {"extend_existing": True}
 
     id = Column(Integer, primary_key=True, index=True)
     scan_id = Column(Integer, ForeignKey("scans.id"), nullable=False)

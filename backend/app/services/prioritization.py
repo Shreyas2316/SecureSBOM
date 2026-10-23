@@ -4,10 +4,29 @@ SEVERITY_RANK = {
     "CRITICAL": 5,
     "HIGH": 4,
     "MEDIUM": 3,
+    "MODERATE": 3,
     "LOW": 2,
+    "INFORMATIONAL": 1,
     "INFO": 1,
     "UNKNOWN": 0
 }
+
+def normalize_severity_name(sev: Optional[str]) -> str:
+    """Normalize qualitative severity strings to standard schema."""
+    if not sev:
+        return "UNKNOWN"
+    s = str(sev).strip().upper()
+    if "CRITICAL" in s:
+        return "CRITICAL"
+    elif "HIGH" in s:
+        return "HIGH"
+    elif "MEDIUM" in s or "MODERATE" in s:
+        return "MEDIUM"
+    elif "LOW" in s:
+        return "LOW"
+    elif "INFO" in s:
+        return "INFO"
+    return "UNKNOWN"
 
 def determine_priority_from_severity(severity: str, cvss_score: Optional[float] = None) -> str:
     """
@@ -21,7 +40,7 @@ def determine_priority_from_severity(severity: str, cvss_score: Optional[float] 
     INFO     -> P5-Info
     UNKNOWN  -> P-Unknown
     """
-    sev_upper = severity.upper() if severity else "UNKNOWN"
+    sev_upper = normalize_severity_name(severity)
     
     if cvss_score is not None:
         if cvss_score >= 9.0:
@@ -41,7 +60,7 @@ def determine_priority_from_severity(severity: str, cvss_score: Optional[float] 
         return "P3-Medium"
     elif sev_upper == "LOW":
         return "P4-Low"
-    elif sev_upper == "INFO":
+    elif sev_upper in ("INFO", "INFORMATIONAL"):
         return "P5-Info"
     else:
         return "P-Unknown"
@@ -84,11 +103,13 @@ def resolve_canonical_severity(severity_sources: List[Dict[str, Any]]) -> Tuple[
         # Evaluate highest severity rank among named sources
         highest_rank = 0
         for src in severity_sources:
-            src_sev = (src.get("severity") or "UNKNOWN").upper()
-            rank = SEVERITY_RANK.get(src_sev, 0)
+            raw_s = (src.get("severity") or "UNKNOWN").upper()
+            norm_s = normalize_severity_name(raw_s)
+            rank = SEVERITY_RANK.get(norm_s, 0)
             if rank > highest_rank:
                 highest_rank = rank
-                best_severity = src_sev
+                best_severity = norm_s
 
+    best_severity = normalize_severity_name(best_severity)
     priority_tier = determine_priority_from_severity(best_severity, best_cvss_score)
     return best_severity, best_cvss_score, best_cvss_vector, priority_tier
