@@ -10,18 +10,19 @@ import uuid
 import os
 from typing import List, Optional, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Header
-from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field, validator, ConfigDict
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from fastapi.responses import Response
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
+from app.core.security import get_current_user
 from app.database import get_db
 from app.config import settings
 from app.models import (
     Scan, Component, Vulnerability, ScanVulnerability,
     AIFinding, AIFindingReview, DependencyAlternative,
     MonitoringSource, MonitoringAlert, GeneratedReport,
-    AIAssessmentStatus,
+    AIAssessmentStatus, User,
 )
 from app.services.ai_analysis import (
     analyze_emerging_advisory, analyze_potential_weakness,
@@ -87,11 +88,18 @@ class AIFindingResponse(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────
-# Helper: get user identity from header
+# Helper: authenticated user identity (no spoofable headers)
 # ─────────────────────────────────────────────────────────────
 
-def get_user_id(x_user_id: Optional[str] = Header(None)) -> str:
-    return x_user_id or "anonymous"
+def get_user_id(current_user: User = Depends(get_current_user)) -> str:
+    return current_user.username
+
+
+def _check_scan_ownership(scan: Scan, current_user: User) -> None:
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    if current_user.role != "admin" and scan.owner_id is not None and scan.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Scan not found")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -198,6 +206,7 @@ def list_ai_findings(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     List AI assessments with filtering and pagination.
@@ -369,11 +378,11 @@ def link_finding_to_verified(
 async def get_scan_alternatives(
     scan_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Get safer dependency alternatives for vulnerabilities in a scan."""
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
-    if not scan:
-        raise HTTPException(status_code=404, detail="Scan not found")
+    _check_scan_ownership(scan, current_user)
 
     # Fetch verified vulnerabilities for this scan
     vuln_data = []
@@ -430,6 +439,72 @@ async def get_scan_alternatives(
         "scan_id": scan_id,
         "alternatives": alternatives,
         "note": "Recommendations require manual review. Do NOT apply automatically.",
+    }
+
+
+@router.post("/api/v1/scans/{scan_id}/ai-dependency-check")
+async def ai_check_latest_dependencies(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    AI-assisted check that inspects scanned packages against the latest stable PyPI
+    releases and OSV status, returning reference upgrade candidates for the user.
+    """
+    import asyncio
+    import httpx
+    from app.services.alternatives_service import fetch_package_info
+
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    _check_scan_ownership(scan, current_user)
+
+    components = list(scan.components)[:25]
+    if not components:
+        return {"scan_id": scan_id, "recommendations": [], "note": "No components in scan."}
+
+    sem = asyncio.Semaphore(8)
+
+    async def _inspect_comp(c):
+        async with sem:
+            latest_info = await fetch_package_info(c.name, None)
+            latest_ver = (latest_info or {}).get("version")
+            osv_clean = None
+            if latest_ver:
+                try:
+                    async with httpx.AsyncClient(timeout=6.0) as client:
+                        resp = await client.post(
+                            "https://api.osv.dev/v1/query",
+                            json={"package": {"name": c.name, "ecosystem": "PyPI"}, "version": latest_ver},
+                        )
+                        if resp.status_code == 200:
+                            osv_clean = len(resp.json().get("vulns", [])) == 0
+                except Exception:
+                    pass
+            needs_update = bool(latest_ver and c.version and latest_ver != c.version)
+            return {
+                "package_name": c.name,
+                "current_version": c.version,
+                "latest_version": latest_ver or c.version,
+                "needs_update": needs_update,
+                "osv_clean": osv_clean,
+                "license": (latest_info or {}).get("license") or "Unknown",
+                "suggested_pin": f"{c.name}=={latest_ver or c.version}",
+                "pypi_url": f"https://pypi.org/project/{c.name}/{latest_ver or ''}/",
+                "ai_note": (
+                    f"AI Reference: Upgrade {c.name} from {c.version} to latest {latest_ver} "
+                    f"({'0 known OSV advisories' if osv_clean else 'verify advisories before upgrade'})."
+                    if needs_update
+                    else f"AI Reference: {c.name}=={c.version} is already on the latest PyPI release."
+                ),
+            }
+
+    recommendations = await asyncio.gather(*[_inspect_comp(c) for c in components])
+    return {
+        "scan_id": scan_id,
+        "provider": settings.AI_PROVIDER if settings.AI_ENABLED else "ai-reference-advisor",
+        "recommendations": recommendations,
+        "note": "AI Reference Only — review compatibility and breaking changes before updating requirements.txt.",
     }
 
 
@@ -632,7 +707,10 @@ async def download_scan_report_pdf(
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/api/v1/monitoring/status")
-def monitoring_status(db: Session = Depends(get_db)):
+def monitoring_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get current monitoring source status and last sync info."""
     return get_monitoring_status(db)
 
@@ -661,6 +739,7 @@ def list_monitoring_alerts(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """List monitoring alerts for new advisories affecting saved dependencies."""
     q = db.query(MonitoringAlert)
@@ -710,7 +789,10 @@ def acknowledge_alert(
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/api/v1/ai/dashboard")
-def ai_dashboard_summary(db: Session = Depends(get_db)):
+def ai_dashboard_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Dashboard summary cards for AI-Detected Emerging Vulnerabilities.
     Counts are SEPARATE from verified vulnerability counts.

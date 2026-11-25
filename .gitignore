@@ -11,6 +11,22 @@ env/
 *.swp
 *.swo
 
+# Secrets & local databases
+.env
+.env.local
+.env.production.local
+*.db
+*.sqlite
+*.sqlite3
+
+# Frontend build & dependencies
+frontend/node_modules/
+frontend/dist/
+
+# Local vector / cache stores
+chroma_db/
+logs/
+
 # Output directory files (keep output directory via .gitkeep if desired)
 output/*
 !output/.gitkeep

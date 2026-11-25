@@ -27,17 +27,48 @@ export default function DashboardView({ onNavigate, onSelectScan, latestScan }) 
       .finally(() => setLoading(false));
   }, []);
 
-  const activeData = latestScan?.report || (history.length > 0 ? history[0] : null);
+  const activeData = latestScan?.report || latestScan || (history.length > 0 ? history[0] : null);
   const summary = activeData?.summary || activeData || {};
 
-  const totalScanned = summary.total_scanned || 0;
-  const directDeps = summary.total_direct_deps ?? summary.direct_deps_count ?? 0;
-  const transitiveDeps = summary.total_transitive_deps ?? summary.transitive_deps_count ?? 0;
-  const rawAdvisories = summary.total_raw_advisories ?? summary.raw_advisories_count ?? 0;
-  const canonicalVulns = summary.total_canonical_vulnerabilities ?? summary.canonical_vulns_count ?? 0;
-  const vulnerableComponents = summary.vulnerable_components_count ?? 0;
+  const depsList = activeData?.dependencies || activeData?.components || [];
+  const totalScanned = summary.total_scanned 
+    ?? summary.total_deps 
+    ?? (depsList.length > 0 ? depsList.length : 0);
 
-  const sevCounts = summary.vulnerabilities_by_severity || summary.severity_counts || {};
+  const directDeps = summary.total_direct_deps 
+    ?? summary.direct_deps 
+    ?? summary.direct_deps_count 
+    ?? (depsList.length > 0 ? depsList.filter(d => d.is_direct).length : 0);
+
+  const transitiveDeps = summary.total_transitive_deps 
+    ?? summary.transitive_deps 
+    ?? summary.transitive_deps_count 
+    ?? (depsList.length > 0 ? depsList.filter(d => !d.is_direct).length : 0);
+
+  const rawAdvisories = summary.total_raw_advisories 
+    ?? summary.advisory_record_count 
+    ?? summary.raw_advisories_count 
+    ?? summary.total_vulnerabilities 
+    ?? 0;
+
+  const canonicalVulns = summary.total_canonical_vulnerabilities 
+    ?? summary.canonical_vulns_count 
+    ?? summary.unique_vuln_count 
+    ?? summary.vuln_count 
+    ?? 0;
+
+  const vulnerableComponents = summary.vulnerable_components_count 
+    ?? summary.affected_components_count 
+    ?? 0;
+
+  const sevCounts = summary.vulnerabilities_by_severity || summary.severity_counts || {
+    CRITICAL: summary.critical_count || 0,
+    HIGH: summary.high_count || 0,
+    MEDIUM: summary.medium_count || 0,
+    LOW: summary.low_count || 0,
+    INFORMATIONAL: summary.info_count || 0,
+    UNKNOWN: summary.unknown_count || 0,
+  };
   const totalVulnsForBar = Math.max(1, canonicalVulns);
 
   const getWidth = (cnt) => `${Math.round(((cnt || 0) / totalVulnsForBar) * 100)}%`;

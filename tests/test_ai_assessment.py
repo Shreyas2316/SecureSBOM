@@ -105,9 +105,22 @@ def test_ai_status_endpoint():
     assert "secret" not in data
 
 
+def _auth_headers(username_prefix="ai_auditor"):
+    import uuid
+    uname = f"{username_prefix}_{uuid.uuid4().hex[:8]}"
+    res = client.post("/api/v1/auth/register", json={
+        "username": uname,
+        "email": f"{uname}@example.com",
+        "password": "StrongPassword123!",
+    })
+    assert res.status_code == 201
+    return uname, {"Authorization": f"Bearer {res.json()['access_token']}"}
+
+
 def test_ai_findings_separation_from_confirmed_vulns():
     """Category B (AIFinding) records must be queried and stored independently of Category A."""
-    res = client.get("/api/v1/ai/findings")
+    _, headers = _auth_headers("sep")
+    res = client.get("/api/v1/ai/findings", headers=headers)
     assert res.status_code == 200
     data = res.json()
     assert "findings" in data
@@ -117,7 +130,8 @@ def test_ai_findings_separation_from_confirmed_vulns():
 
 
 def test_ai_dashboard_summary_separate_counts():
-    res = client.get("/api/v1/ai/dashboard")
+    _, headers = _auth_headers("dash")
+    res = client.get("/api/v1/ai/dashboard", headers=headers)
     assert res.status_code == 200
     data = res.json()
     assert "total_ai_assessments" in data
@@ -161,7 +175,8 @@ def test_review_history_retention_on_rejection():
         db.add(finding)
         db.commit()
 
-        # Review and reject finding
+        # Review and reject finding using authenticated JWT
+        auditor_name, headers = _auth_headers("security_auditor")
         res = client.patch(
             f"/api/v1/ai/findings/{test_id}/review",
             json={
@@ -169,12 +184,12 @@ def test_review_history_retention_on_rejection():
                 "notes": "Reviewed and concluded this is a false positive based on source code analysis.",
                 "reason": "Not reproducible in current version"
             },
-            headers={"X-User-Id": "security_auditor"}
+            headers=headers
         )
         assert res.status_code == 200
         data = res.json()
         assert data["new_status"] == "rejected_after_review"
-        assert data["reviewer_id"] == "security_auditor"
+        assert data["reviewer_id"] == auditor_name
 
         # Verify record is STILL present in database (not deleted)
         finding_check = db.query(AIFinding).filter(AIFinding.finding_id == test_id).first()
@@ -185,6 +200,6 @@ def test_review_history_retention_on_rejection():
         reviews = db.query(AIFindingReview).filter(AIFindingReview.finding_id_ref == finding_check.id).all()
         assert len(reviews) >= 1
         assert reviews[0].action == "rejected_after_review"
-        assert reviews[0].reviewer_id == "security_auditor"
+        assert reviews[0].reviewer_id == auditor_name
     finally:
         db.close()

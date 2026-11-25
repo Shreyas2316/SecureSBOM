@@ -11,6 +11,9 @@ import AIEmergingVulnView from "../components/AIEmergingVulnView";
 import SaferAlternativesView from "../components/SaferAlternativesView";
 import ReportsView from "../components/ReportsView";
 import MonitoringStatusView from "../components/MonitoringStatusView";
+import IntelligenceDatasetView from "../components/IntelligenceDatasetView";
+import EmergingVulnsView from "../components/EmergingVulnsView";
+import SettingsView from "../components/SettingsView";
 import { fetchScanById, fetchScanHistory } from "../api";
 import { CheckCircle2, AlertCircle, Info } from "lucide-react";
 
@@ -128,6 +131,14 @@ export default function ScannerApp() {
             <AIEmergingVulnView onNavigate={setActiveTab} />
           )}
 
+          {activeTab === "emerging_vulns" && (
+            <EmergingVulnsView activeScan={activeScan} />
+          )}
+
+          {activeTab === "intel_dataset" && (
+            <IntelligenceDatasetView />
+          )}
+
           {activeTab === "alternatives" && (
             <SaferAlternativesView activeScan={activeScan} />
           )}
@@ -145,6 +156,10 @@ export default function ScannerApp() {
 
           {activeTab === "monitoring" && (
             <MonitoringStatusView />
+          )}
+
+          {activeTab === "settings" && (
+            <SettingsView />
           )}
         </main>
       </div>

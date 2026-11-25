@@ -4,6 +4,7 @@ Identifies safer versions or replacement packages for vulnerable dependencies.
 Uses PyPI metadata and authoritative fixed-version data only.
 Does NOT automatically change project files.
 """
+import asyncio
 import logging
 from typing import Optional, List, Dict, Any
 
@@ -76,21 +77,23 @@ def find_safe_upgrade(
 ) -> Optional[str]:
     """
     Find the smallest stable version >= fixed_version that is > current.
-    Returns None if no safe version can be identified.
+    If current_version_str is 'unknown' or invalid, falls back to fixed_version_str or latest stable.
     """
     if not all_versions:
         return None
 
+    current = None
     try:
-        current = Version(current_version_str)
+        if current_version_str and current_version_str not in ("unknown", "unpinned", "unresolved"):
+            current = Version(current_version_str)
     except InvalidVersion:
-        return None
+        current = None
 
     candidates = []
     for vs in all_versions:
         try:
             v = Version(vs)
-            if v <= current:
+            if current is not None and v <= current:
                 continue
             if fixed_version_str:
                 try:
@@ -106,7 +109,6 @@ def find_safe_upgrade(
     if not candidates:
         return None
 
-    # Return smallest qualifying version (minimal upgrade)
     return str(min(candidates))
 
 
@@ -213,38 +215,73 @@ async def get_alternatives_for_scan(
     vulnerabilities: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """
-    Generate alternatives for all vulnerabilities in a scan.
-    Each vuln is processed independently.
+    Generate and OSV-verify alternatives for all vulnerabilities in a scan concurrently.
     """
-    all_alternatives = []
+    unique_items = []
     seen = set()
-    versions_cache: Dict[str, List[str]] = {}
-    info_cache: Dict[str, Dict[str, Any]] = {}
-
     for vuln in vulnerabilities:
         pkg = vuln.get("affected_component_name") or vuln.get("package_name", "")
         ver = vuln.get("affected_component_version") or vuln.get("package_version", "")
         canonical_id = vuln.get("canonical_id") or vuln.get("vulnerability_canonical_id")
         fixed_ver = vuln.get("fixed_version")
-
         key = f"{pkg}@{ver}@{canonical_id}"
-        if key in seen:
-            continue
-        seen.add(key)
+        if pkg and ver and key not in seen:
+            seen.add(key)
+            unique_items.append((pkg, ver, canonical_id, fixed_ver))
 
-        if not pkg or not ver:
-            continue
+    versions_cache: Dict[str, List[str]] = {}
+    info_cache: Dict[str, Dict[str, Any]] = {}
+    sem = asyncio.Semaphore(8)
 
-        try:
-            alternatives = await build_alternatives(
-                pkg, ver, canonical_id, fixed_ver,
-                versions_cache=versions_cache,
-                info_cache=info_cache
-            )
-            for alt in alternatives:
-                alt["vulnerability_canonical_id"] = canonical_id
-                all_alternatives.append(alt)
-        except Exception as exc:
-            logger.error("Failed to build alternatives for %s@%s: %s", pkg, ver, exc)
+    async def _build_one(item):
+        pkg, ver, canonical_id, fixed_ver = item
+        async with sem:
+            try:
+                alts = await build_alternatives(
+                    pkg, ver, canonical_id, fixed_ver,
+                    versions_cache=versions_cache,
+                    info_cache=info_cache,
+                )
+                for a in alts:
+                    a["vulnerability_canonical_id"] = canonical_id
+                return alts
+            except Exception as exc:
+                logger.error("Failed to build alternatives for %s@%s: %s", pkg, ver, exc)
+                return []
+
+    nested = await asyncio.gather(*[_build_one(it) for it in unique_items])
+    all_alternatives = [a for sub in nested for a in sub]
+
+    # Verify recommended versions against OSV in parallel
+    osv_check_targets = {
+        (a["package_name"], a["recommended_version"])
+        for a in all_alternatives
+        if a.get("recommended_version")
+    }
+    if osv_check_targets:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            async def _check_osv(pair):
+                p_name, p_ver = pair
+                try:
+                    resp = await client.post(
+                        "https://api.osv.dev/v1/query",
+                        json={"package": {"name": p_name, "ecosystem": "PyPI"}, "version": p_ver},
+                    )
+                    if resp.status_code == 200:
+                        vulns = resp.json().get("vulns", [])
+                        return pair, len(vulns)
+                except Exception:
+                    pass
+                return pair, None
+
+            checked = dict(await asyncio.gather(*[_check_osv(p) for p in osv_check_targets]))
+            for a in all_alternatives:
+                rv = a.get("recommended_version")
+                if rv:
+                    cnt = checked.get((a["package_name"], rv))
+                    if cnt == 0:
+                        a["known_vulns_in_alternative"] = "0 known OSV advisories (verified clean at check time)."
+                    elif isinstance(cnt, int) and cnt > 0:
+                        a["known_vulns_in_alternative"] = f"Warning: {cnt} OSV advisory/advisories still affect v{rv}; consider latest stable."
 
     return all_alternatives

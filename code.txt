@@ -1,0 +1,326 @@
+================================================================================
+              SECURESBOM (PRJ_56) - SYSTEM ALGORITHMS & PSEUDOCODE
+================================================================================
+
+--------------------------------------------------------------------------------
+ALGORITHM 1: Multi-Format Manifest Parsing & PEP 508/503 Sanitization
+--------------------------------------------------------------------------------
+INPUT:  manifest_content (String), manifest_filename (String)
+OUTPUT: parsed_dependencies (List), warnings (List), skipped_by_marker (List)
+
+BEGIN
+  IF byte_length(manifest_content) > MAX_MANIFEST_BYTES (2 MB) THEN
+    RAISE ValueError("Manifest exceeds maximum allowed size")
+  END IF
+
+  format <- detect_format(manifest_filename, manifest_content)
+  // Supports: requirements.txt, pyproject.toml, poetry.lock, Pipfile.lock, CycloneDX JSON
+
+  IF format == "pyproject.toml" THEN
+    lines <- extract [project.dependencies] and [tool.poetry.dependencies]
+  ELSE IF format == "poetry.lock" OR format == "Pipfile.lock" OR format == "cyclonedx" THEN
+    RETURN extract_locked_components_with_purls(manifest_content, format)
+  END IF
+
+  seen <- empty Map<normalized_name, Dependency>
+  FOR EACH (line_num, raw_line) IN lines DO
+    line <- strip_comments_and_whitespace(raw_line)
+    IF line is empty OR starts_with("-") OR length(line) > MAX_LINE_LENGTH THEN
+      CONTINUE
+    END IF
+
+    IF contains_untrusted_non_https_or_vcs_url(line) THEN
+      APPEND warning("Rejected untrusted URL/VCS requirement")
+      CONTINUE
+    END IF
+
+    req <- parse_pep508_requirement(line)
+    IF req.marker EXISTS AND evaluate_marker(req.marker) == FALSE THEN
+      APPEND req TO skipped_by_marker
+      CONTINUE
+    END IF
+
+    norm_name <- canonicalize_pep503(req.name)
+    IF norm_name IN seen THEN
+      prefer pinned specifier over unpinned in seen[norm_name]
+    ELSE
+      seen[norm_name] <- Dependency(name, norm_name, version, specifier, is_direct=TRUE)
+    END IF
+  END FOR
+
+  RETURN values(seen), warnings, skipped_by_marker
+END
+
+
+--------------------------------------------------------------------------------
+ALGORITHM 2: Bounded Parallel Transitive Dependency Resolution (BFS)
+--------------------------------------------------------------------------------
+INPUT:  direct_deps (List), max_depth (Default=3), max_components (Default=500)
+OUTPUT: all_components (List with PURLs and resolution_status)
+
+BEGIN
+  all_components <- initialize with direct_deps
+  visited <- Set of normalized_names in direct_deps
+  active_path <- empty Set
+  current_level <- copy(direct_deps)
+
+  FOR depth <- 1 TO max_depth DO
+    IF length(all_components) >= max_components OR current_level is empty THEN
+      BREAK
+    END IF
+
+    // Fetch PyPI release metadata concurrently (bounded Semaphore = 10, zero code execution)
+    PARALLEL FOR EACH dep IN current_level DO
+      metadata_cache[dep] <- fetch_pypi_json(dep.name, dep.version)
+    END PARALLEL FOR
+
+    next_level <- empty List
+    FOR EACH dep IN current_level DO
+      ADD dep.normalized_name TO active_path
+      meta <- metadata_cache[dep]
+
+      IF dep.operator != "==" OR dep.version == "unknown" THEN
+        dep.version <- resolve_highest_matching_pep440(meta.releases, dep.specifier)
+        dep.purl <- "pkg:pypi/" + dep.normalized_name + "@" + dep.version
+      END IF
+
+      FOR EACH req_str IN meta.info.requires_dist DO
+        IF length(all_components) >= max_components THEN BREAK END IF
+        sub <- parse_requires_dist_with_marker(req_str, active_extras=dep.extras)
+        IF sub IS NULL THEN CONTINUE END IF
+
+        IF sub.normalized_name IN active_path THEN
+          CONTINUE  // Cycle detected; prevent infinite recursion
+        END IF
+        IF sub.normalized_name NOT IN visited THEN
+          ADD sub.normalized_name TO visited
+          sub.version <- resolve_highest_matching_pep440(fetch_pypi_json(sub.name), sub.specifier)
+          sub.is_direct <- FALSE
+          sub.dependency_depth <- depth
+          sub.purl <- "pkg:pypi/" + sub.normalized_name + "@" + sub.version
+          APPEND sub TO all_components
+          APPEND sub TO next_level
+        END IF
+      END FOR
+      REMOVE dep.normalized_name FROM active_path
+    END FOR
+
+    current_level <- next_level
+  END FOR
+
+  RETURN all_components
+END
+
+
+--------------------------------------------------------------------------------
+ALGORITHM 3: CycloneDX SBOM Generation
+--------------------------------------------------------------------------------
+INPUT:  project_name (String), components (List)
+OUTPUT: bom_json (CycloneDX 1.4/1.5 JSON Dict)
+
+BEGIN
+  bom <- new CycloneDX_BOM()
+  bom.metadata.tool <- Tool(vendor="SecureSBOM", name="SecureSBOM Scanner")
+  bom.metadata.component <- Component(name=project_name, type=APPLICATION)
+
+  root_dep <- Dependency(ref=bom.metadata.component.bom_ref)
+  FOR EACH comp IN components DO
+    purl <- PackageURL(type="pypi", name=comp.name, version=comp.version)
+    cdx_comp <- Component(name=comp.name, version=comp.version, type=LIBRARY, purl=purl)
+    ADD Property("securesbom:is_direct", comp.is_direct) TO cdx_comp
+    ADD Property("securesbom:depth", comp.dependency_depth) TO cdx_comp
+    ADD cdx_comp TO bom.components
+    IF comp.is_direct THEN
+      ADD Dependency(ref=cdx_comp.bom_ref) TO root_dep.dependencies
+    END IF
+  END FOR
+
+  ADD root_dep TO bom.dependencies
+  bom_json <- serialize_cyclonedx_json(bom)
+  SAVE bom_json TO output/bom.json
+  RETURN bom_json
+END
+
+
+--------------------------------------------------------------------------------
+ALGORITHM 4: Canonical Vulnerability Correlation & UNKNOWN Auto-Enrichment
+--------------------------------------------------------------------------------
+INPUT:  components (List)
+OUTPUT: canonical_vulnerabilities (List), metrics (Dict)
+
+BEGIN
+  // Step 1: Parallel OSV queries (Semaphore = 10, TTL cache + failure tracking)
+  PARALLEL FOR EACH comp IN components DO
+    osv_hits[comp] <- query_osv_api(comp.name, comp.version, failure_tracker)
+  END PARALLEL FOR
+
+  canonical_vulnerabilities <- empty List
+
+  FOR EACH (comp, raw_hits) IN osv_hits DO
+    IF raw_hits is empty THEN CONTINUE END IF
+
+    // Step 2: Build Alias Graph (CVE, GHSA, PYSEC, OSV) and cluster connected components
+    adj_graph <- empty Graph
+    FOR EACH record IN raw_hits DO
+      ids <- extract_primary_id_and_aliases(record)
+      add_clique_edges(adj_graph, ids)
+    END FOR
+
+    clusters <- find_connected_components_BFS(adj_graph)
+    FOR EACH cluster IN clusters DO
+      canonical_id <- pick_deterministic_id(cluster) // Priority: CVE > GHSA > PYSEC > OSV
+      bucket <- records belonging to cluster
+      severity_sources <- collect OSV severities/CVSS from bucket
+
+      // Step 3: Enrich with NVD API 2.0 if CVE alias exists
+      IF cve_alias EXISTS IN cluster THEN
+        nvd_data <- enrich_from_nvd_api(cve_alias)
+        IF nvd_data EXISTS THEN APPEND nvd_data TO severity_sources END IF
+      END IF
+
+      (severity, cvss_score, cvss_vector, priority) <- resolve_canonical_severity(severity_sources)
+
+      // Step 4: Auto-Enrich UNKNOWN severity / missing CVSS from GitHub & OSV Detail
+      IF severity == "UNKNOWN" OR cvss_score IS NULL THEN
+        extra <- query_github_advisory_or_osv_detail(canonical_id, cluster)
+        IF extra EXISTS THEN
+          merge summary, details, reference_url, and severity into severity_sources
+          (severity, cvss_score, cvss_vector, priority) <- resolve_canonical_severity(severity_sources)
+        END IF
+      END IF
+
+      APPEND CanonicalVuln(canonical_id, severity, cvss_score, priority, ...) TO canonical_vulnerabilities
+    END FOR
+  END FOR
+
+  // Step 5: Enrich with CISA KEV & FIRST EPSS (separate fields; never alter vuln counts)
+  kev_catalog <- load_cisa_kev_catalog()
+  epss_scores <- query_first_epss_batch(all CVE IDs)
+  FOR EACH vuln IN canonical_vulnerabilities DO
+    IF vuln.cve_id IN kev_catalog THEN vuln.is_kev <- TRUE END IF
+    IF vuln.cve_id IN epss_scores THEN vuln.epss_score <- epss_scores[vuln.cve_id] END IF
+  END FOR
+
+  metrics.coverage_status <- "incomplete_coverage" IF failure_tracker.osv_failures > 0 ELSE "complete"
+  RETURN canonical_vulnerabilities, metrics
+END
+
+
+--------------------------------------------------------------------------------
+ALGORITHM 5: Exact FIRST CVSS v3.1 Base Score & Priority Tiering
+--------------------------------------------------------------------------------
+INPUT:  cvss_vector (String, e.g., "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N")
+OUTPUT: base_score (Float 0.0-10.0), severity (String), priority_tier (String)
+
+BEGIN
+  Parse AV, AC, PR, UI, S (Scope), C, I, A from cvss_vector
+  ISS <- 1.0 - ((1 - W(C)) * (1 - W(I)) * (1 - W(A)))
+  IF ISS <= 0 THEN RETURN 0.0, "INFORMATIONAL", "P5-Info" END IF
+
+  IF S == "C" (Scope Changed) THEN
+    Impact <- 7.52 * (ISS - 0.029) - 3.25 * (ISS - 0.02)^15
+    PR_weight <- {N: 0.85, L: 0.68, H: 0.50}[PR]
+  ELSE (Scope Unchanged)
+    Impact <- 6.42 * ISS
+    PR_weight <- {N: 0.85, L: 0.62, H: 0.27}[PR]
+  END IF
+
+  Exploitability <- 8.22 * W(AV) * W(AC) * PR_weight * W(UI)
+
+  IF S == "C" THEN
+    raw <- MIN(1.08 * (Impact + Exploitability), 10.0)
+  ELSE
+    raw <- MIN(Impact + Exploitability, 10.0)
+  END IF
+
+  base_score <- Roundup_1_Decimal(raw)
+  severity <- map_score_to_severity(base_score) // >=9.0 CRIT, >=7.0 HIGH, >=4.0 MED, >=0.1 LOW
+  priority <- map_severity_to_priority(severity) // P1-Critical .. P5-Info
+  RETURN base_score, severity, priority
+END
+
+
+--------------------------------------------------------------------------------
+ALGORITHM 6: Safer Alternatives & AI Latest Dependency Reference Check
+--------------------------------------------------------------------------------
+INPUT:  scan_id (Integer)
+OUTPUT: verified_alternatives (List), ai_reference_recommendations (List)
+
+BEGIN
+  // Part A: Safer Alternatives for Vulnerable Packages
+  PARALLEL FOR EACH unique (pkg, ver, canonical_id, fixed_ver) IN scan.vulnerabilities DO
+    all_versions <- fetch_stable_non_yanked_pypi_versions(pkg)
+    recommended_ver <- smallest v IN all_versions WHERE v > ver AND v >= fixed_ver
+  END PARALLEL FOR
+
+  PARALLEL FOR EACH recommended_ver DO
+    osv_vulns <- query_osv_api(pkg, recommended_ver)
+    IF len(osv_vulns) == 0 THEN
+      alt.known_vulns_status <- "0 known OSV advisories (verified clean)"
+    ELSE
+      alt.known_vulns_status <- "Warning: advisories still affect this version"
+    END IF
+  END PARALLEL FOR
+
+  // Part B: AI Latest Dependency Reference Check
+  PARALLEL FOR EACH comp IN scan.components DO
+    latest_ver <- fetch_latest_pypi_version(comp.name)
+    osv_clean <- (len(query_osv_api(comp.name, latest_ver)) == 0)
+    APPEND ReferenceRecommendation(
+      package=comp.name,
+      current=comp.version,
+      latest=latest_ver,
+      osv_clean=osv_clean,
+      suggested_pin=comp.name + "==" + latest_ver,
+      note="AI Reference Only - Manual Review Required"
+    )
+  END PARALLEL FOR
+END
+
+
+--------------------------------------------------------------------------------
+ALGORITHM 7: Continuous Intelligence Sync & Evidence-Driven RAG Pipeline
+--------------------------------------------------------------------------------
+INPUT:  package_name (String), package_version (String), db (Session)
+OUTPUT: Category B EmergingFinding OR Abstention
+
+BEGIN
+  // Phase 1: Incremental Sync (ETag / Last-Modified / SHA-256 Deduplication)
+  FOR EACH enabled source IN [GHSA, PyPA, CVE_V5, SecurityLab, oss-security, KEV, RSS] DO
+    items, new_etag <- fetch_incremental(source, source.etag, source.last_modified)
+    FOR EACH item IN items DO
+      doc_uid <- SHA256(source.key + item.external_id)[:32]
+      IF doc_uid NOT IN IntelligenceDocument THEN
+        INSERT IntelligenceDocument AND update SQLite FTS5 index
+      ELSE IF item.is_withdrawn THEN
+        MARK document as withdrawn
+      END IF
+    END FOR
+  END FOR
+
+  // Phase 2: Hybrid Retrieval (SQLite FTS5 BM25 + TF-IDF Cosine + RRF)
+  keyword_ranks <- query_sqlite_fts5(package_name, query_text)
+  semantic_ranks <- rank_by_tfidf_cosine_similarity(candidate_docs, query_text)
+  top_docs <- fuse_with_Reciprocal_Rank_Fusion(keyword_ranks, semantic_ranks, k=5)
+
+  // Abstain if no supporting evidence exists
+  IF top_docs is empty THEN
+    RETURN { abstained: TRUE, message: "Insufficient evidence to establish a vulnerability." }
+  END IF
+
+  // Phase 3: Deterministic Version Check & Prompt-Injection Defense
+  version_status <- check_pep440_applicability(package_version, top_docs.affected_ranges)
+  sanitized_excerpts <- strip_prompt_injection_directives(top_docs)
+  (confidence, explanation) <- compute_confidence_rubric(top_docs, version_status)
+
+  // Phase 4: AI Synthesis with Strict Citation Validation
+  IF AI_ENABLED THEN
+    ai_output <- call_ai_provider(sanitized_excerpts)
+    retain ONLY cited doc_uids present in top_docs (reject fabricated CVEs/URLs)
+  END IF
+
+  // Store strictly in Category B (EmergingFinding), separate from Category A totals
+  PERSIST EmergingFinding(status="emerging", version_status, confidence, top_docs.urls)
+  RETURN EmergingFinding
+END
+================================================================================

@@ -1,20 +1,30 @@
 import logging
 import asyncio
 import re
+import time
 import httpx
 from typing import List, Dict, Any, Optional, Tuple, Set
 from app.config import settings
 
+from contextvars import ContextVar
+
 logger = logging.getLogger("securesbom.osv")
 
-OSV_CACHE: Dict[str, List[Dict[str, Any]]] = {}
+_OSV_FAILURE_TRACKER: ContextVar[Optional[Dict[str, Any]]] = ContextVar("_OSV_FAILURE_TRACKER", default=None)
 
-# Patterns matching generic package description blurbs rather than vulnerability advisories
+def set_osv_failure_tracker(tracker: Optional[Dict[str, Any]]) -> None:
+    _OSV_FAILURE_TRACKER.set(tracker)
+
+# Cache stores (vulns_list, expires_at_timestamp)
+OSV_CACHE: Dict[str, Any] = {}
+OSV_BATCH_DETAILS_CACHE: Dict[str, Tuple[Dict[str, Any], float]] = {}
+
 GENERIC_PACKAGE_PATTERNS = [
     r"^[A-Za-z0-9_.\-]+ is a (user-friendly|comprehensive|popular|Python) ",
     r"^[A-Za-z0-9_.\-]+ is an HTTP library",
     r"^[A-Za-z0-9_.\-]+ provides ",
 ]
+
 
 def extract_all_identifiers(vuln_raw: Dict[str, Any]) -> Set[str]:
     """
@@ -34,15 +44,16 @@ def extract_all_identifiers(vuln_raw: Dict[str, Any]) -> Set[str]:
 
     return identifiers
 
+
 def extract_cve_id(vuln_raw: Dict[str, Any]) -> Optional[str]:
     """Extract CVE ID from vulnerability ID or aliases if available."""
     all_ids = extract_all_identifiers(vuln_raw)
     cves = [i for i in all_ids if i.startswith("CVE-")]
     if cves:
-        # Sort to be deterministic (e.g. CVE-2024-...)
         cves.sort()
         return cves[0]
     return None
+
 
 def extract_references(vuln_raw: Dict[str, Any]) -> List[str]:
     """Extract reference URLs from OSV raw payload."""
@@ -55,6 +66,7 @@ def extract_references(vuln_raw: Dict[str, Any]) -> List[str]:
             elif isinstance(ref, str):
                 urls.append(ref)
     return urls
+
 
 def extract_remediation_info(vuln_raw: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     """
@@ -97,6 +109,7 @@ def extract_remediation_info(vuln_raw: Dict[str, Any]) -> Tuple[Optional[str], O
 
     return affected_range, fixed_version
 
+
 def clean_summary_and_details(vuln_raw: Dict[str, Any], pkg_name: str = "") -> Tuple[str, str]:
     """
     Extract summary and details text, filtering out generic package description blurbs.
@@ -104,7 +117,6 @@ def clean_summary_and_details(vuln_raw: Dict[str, Any], pkg_name: str = "") -> T
     summary = (vuln_raw.get("summary") or "").strip()
     details = (vuln_raw.get("details") or "").strip()
 
-    # Check if summary is a generic package description blurb
     is_generic = False
     if summary:
         for pat in GENERIC_PACKAGE_PATTERNS:
@@ -122,6 +134,7 @@ def clean_summary_and_details(vuln_raw: Dict[str, Any], pkg_name: str = "") -> T
         details = summary
 
     return summary, details
+
 
 def extract_severity_and_cvss(vuln_raw: Dict[str, Any]) -> Tuple[Optional[float], Optional[str], str]:
     """
@@ -164,7 +177,6 @@ def extract_severity_and_cvss(vuln_raw: Dict[str, Any]) -> Tuple[Optional[float]
                 cvss_score = cvss_info.get("score")
                 cvss_vector = cvss_info.get("vector_string") or cvss_vector
 
-    # Also check ecosystem_specific
     eco_specific = vuln_raw.get("ecosystem_specific", {})
     if isinstance(eco_specific, dict) and severity_rating == "UNKNOWN":
         eco_sev = str(eco_specific.get("severity", "")).upper()
@@ -177,7 +189,6 @@ def extract_severity_and_cvss(vuln_raw: Dict[str, Any]) -> Tuple[Optional[float]
         elif "LOW" in eco_sev:
             severity_rating = "LOW"
 
-    # If CVSS vector is present but numeric score is missing, calculate score from vector
     if cvss_score is None and cvss_vector:
         try:
             from backend.severity import parse_cvss_vector_or_score
@@ -187,7 +198,6 @@ def extract_severity_and_cvss(vuln_raw: Dict[str, Any]) -> Tuple[Optional[float]
         except Exception:
             pass
 
-    # If numeric score exists, derive standard severity rating if still unknown
     if cvss_score is not None and severity_rating == "UNKNOWN":
         if cvss_score >= 9.0:
             severity_rating = "CRITICAL"
@@ -202,17 +212,29 @@ def extract_severity_and_cvss(vuln_raw: Dict[str, Any]) -> Tuple[Optional[float]
 
     return cvss_score, cvss_vector, severity_rating
 
-async def query_osv_for_package(client: httpx.AsyncClient, name: str, version: str) -> List[Dict[str, Any]]:
+
+async def query_osv_for_package(
+    client: httpx.AsyncClient,
+    name: str,
+    version: str,
+) -> List[Dict[str, Any]]:
     """
-    Query OSV API for a given package name and version.
-    Returns raw vulnerability objects from OSV API.
+    Query OSV API for a given package name and version with TTL caching and backoff.
+    Records lookup failures in contextvar tracker so failed lookups are never misreported as 0 vulns.
     """
-    if version == "unknown" or not version:
+    status_tracker = _OSV_FAILURE_TRACKER.get()
+    if version in ("unknown", "unpinned", "unresolved") or not version:
         return []
 
     cache_key = f"{name.lower()}:{version}"
+    now = time.time()
     if cache_key in OSV_CACHE:
-        return OSV_CACHE[cache_key]
+        cached = OSV_CACHE[cache_key]
+        if isinstance(cached, tuple) and len(cached) == 2:
+            if now < cached[1]:
+                return cached[0]
+        elif isinstance(cached, list):
+            return cached
 
     payload = {
         "package": {
@@ -230,17 +252,20 @@ async def query_osv_for_package(client: httpx.AsyncClient, name: str, version: s
             if response.status_code == 200:
                 data = response.json()
                 vulns = data.get("vulns", [])
-                OSV_CACHE[cache_key] = vulns
+                OSV_CACHE[cache_key] = (vulns, now + settings.CACHE_TTL_SECONDS)
                 return vulns
             elif response.status_code == 429:
-                await asyncio.sleep(1.0 * (attempt + 1))
+                await asyncio.sleep(1.0 * (2 ** attempt))
             else:
-                logger.warning(f"OSV API returned status {response.status_code} for {name}=={version}")
+                logger.warning("OSV API returned status %s for %s==%s", response.status_code, name, version)
+                if status_tracker is not None:
+                    status_tracker["osv_failures"] = status_tracker.get("osv_failures", 0) + 1
                 break
         except (httpx.TimeoutException, httpx.RequestError) as e:
-            logger.warning(f"OSV API attempt {attempt+1} failed for {name}=={version}: {str(e)}")
+            logger.warning("OSV API attempt %s failed for %s==%s: %s", attempt + 1, name, version, e)
             if attempt < max_retries:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.5 * (2 ** attempt))
+            elif status_tracker is not None:
+                status_tracker["osv_failures"] = status_tracker.get("osv_failures", 0) + 1
 
-    OSV_CACHE[cache_key] = []
     return []
