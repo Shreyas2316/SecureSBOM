@@ -102,41 +102,69 @@ def parse_cvss_vector_or_score(raw_str: str) -> Tuple[Optional[float], Optional[
     return detected_score, cvss_version, cvss_vector
 
 
+def _cvss_roundup(val: float) -> float:
+    """Official FIRST CVSS v3.x Roundup(x) to 1 decimal place."""
+    import math
+    int_input = round(val * 100000)
+    if (int_input % 10000) == 0:
+        return int_input / 100000.0
+    return (math.floor(int_input / 10000) + 1) / 10.0
+
+
 def approximate_cvss3_score(vector: str) -> Optional[float]:
     """
-    Approximates CVSS v3 base score from standard vector metrics when score is not supplied.
-    Ensures safe, deterministic valuation.
+    Computes exact FIRST CVSS v3.1 Base Score from standard vector metrics.
+    Handles Scope (S:U vs S:C), Attack Complexity (AC), Privileges Required (PR),
+    User Interaction (UI), and Confidentiality/Integrity/Availability (C/I/A).
     """
     if not vector or "AV:" not in vector:
         return None
-        
+
     parts = dict(re.findall(r"([A-Z]+):([A-Z]+)", vector))
-    
-    # Impact metrics: Confidentiality (C), Integrity (I), Availability (A)
+
     c = parts.get("C", "N")
     i = parts.get("I", "N")
     a = parts.get("A", "N")
-    av = parts.get("AV", "N") # Network, Adjacent, Local, Physical
-    pr = parts.get("PR", "N") # Privileges Required: None, Low, High
-    ui = parts.get("UI", "N") # User Interaction: None, Required
-    
-    # Calculate impact sub-score
+    av = parts.get("AV", "N")
+    ac = parts.get("AC", "L")
+    pr = parts.get("PR", "N")
+    ui = parts.get("UI", "N")
+    scope = parts.get("S", "U")
+
     impact_map = {"H": 0.56, "L": 0.22, "N": 0.0}
     iss = 1.0 - ((1.0 - impact_map.get(c, 0.0)) * (1.0 - impact_map.get(i, 0.0)) * (1.0 - impact_map.get(a, 0.0)))
     if iss <= 0:
         return 0.0
-        
-    impact = 6.42 * iss
-    
-    # Exploitability sub-score
-    av_weights = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}
-    pr_weights = {"N": 0.85, "L": 0.62, "H": 0.27}
+
+    if scope == "C":
+        impact = 7.52 * (iss - 0.029) - 3.25 * ((iss - 0.02) ** 15)
+    else:
+        impact = 6.42 * iss
+
+    if impact <= 0:
+        return 0.0
+
+    av_weights = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.20}
+    ac_weights = {"L": 0.77, "H": 0.44}
+    pr_weights_u = {"N": 0.85, "L": 0.62, "H": 0.27}
+    pr_weights_c = {"N": 0.85, "L": 0.68, "H": 0.50}
+    pr_weights = pr_weights_c if scope == "C" else pr_weights_u
     ui_weights = {"N": 0.85, "R": 0.62}
-    
-    exploitability = 8.22 * av_weights.get(av, 0.85) * pr_weights.get(pr, 0.85) * ui_weights.get(ui, 0.85)
-    
-    base_score = min(10.0, round(impact + exploitability, 1))
-    return max(0.1, base_score)
+
+    exploitability = (
+        8.22
+        * av_weights.get(av, 0.85)
+        * ac_weights.get(ac, 0.77)
+        * pr_weights.get(pr, 0.85)
+        * ui_weights.get(ui, 0.85)
+    )
+
+    if scope == "C":
+        raw_score = min(1.08 * (impact + exploitability), 10.0)
+    else:
+        raw_score = min((impact + exploitability), 10.0)
+
+    return _cvss_roundup(raw_score)
 
 
 def normalize_qualitative_severity(text: str) -> SeverityLevel:

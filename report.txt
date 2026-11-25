@@ -1,0 +1,214 @@
+================================================================================
+         SECURESBOM (PRJ_56) - COMPREHENSIVE PROJECT & TECHNICAL REPORT
+================================================================================
+
+1. EXECUTIVE SUMMARY
+--------------------------------------------------------------------------------
+SecureSBOM (PRJ_56) is a Software Supply Chain Security Platform, OWASP
+CycloneDX SBOM Generator, Dependency Vulnerability Scanner, and AI-Assisted
+Security Reference System built for Python (PyPI) projects.
+
+It ingests dependency manifests, resolves direct and transitive dependency
+graphs without executing untrusted package code, generates schema-validated
+CycloneDX v1.4/v1.5 JSON SBOMs, correlates multi-source vulnerability advisories
+(OSV, NVD, GitHub Advisory Database, CISA KEV, FIRST EPSS), auto-enriches
+UNKNOWN-severity vulnerabilities, and provides OSV-verified upgrade paths plus
+an AI-assisted Latest Dependency Reference Check.
+
+2. ALL CHANGES IMPLEMENTED (UP TO LATEST UPDATE)
+--------------------------------------------------------------------------------
+A. Scanner, Dependency Resolution & Performance Optimizations
+  1. Multi-Format Manifest Support (backend/app/services/dependency_parser.py):
+     - Added full PEP 508, PEP 503, and PEP 440 parsing via `packaging`.
+     - Supports requirements.txt, pyproject.toml, poetry.lock, Pipfile.lock,
+       and CycloneDX JSON SBOM imports.
+     - Evaluates environment markers instead of silently discarding them,
+       merges duplicate entries, enforces 2MB size / 1000-char line limits,
+       and rejects untrusted non-HTTPS / bare VCS URLs.
+  2. Bounded & Parallel Transitive Resolver (backend/app/services/transitive_resolver.py):
+     - Uses version-specific PyPI JSON metadata and PEP 440 SpecifierSet
+       resolution with configurable max depth (default 3) and component cap (500).
+     - Includes cycle detection and parallel async metadata fetching
+       (asyncio.Semaphore(10)).
+  3. Stage 6 Persistence & Scan Speedup (backend/app/api/routes.py):
+     - Parallelized OSV package queries (asyncio.Semaphore(10)).
+     - Replaced per-vulnerability db.commit() calls inside the persistence loop
+       with db.flush() and a single atomic db.commit() at the end, eliminating
+       repeated SQLite disk fsync delays.
+
+B. Accurate CVSS v3.1 Scoring & Unknown Vulnerability Enrichment
+  1. Exact CVSS v3.1 Formula Fix (backend/severity.py):
+     - Updated approximate_cvss3_score() to implement the official FIRST CVSS
+       v3.1 Base Score formula (including Attack Complexity AC, Scope S:U vs
+       S:C, Privileges Required PR weights, and Roundup to 1 decimal place).
+     - Eliminated score inflation that previously pushed HIGH/MEDIUM vectors
+       into CRITICAL on safe or low-risk manifests.
+  2. Auto-Enrichment of UNKNOWN Vulnerabilities (backend/app/services/correlation_service.py):
+     - When a vulnerability has severity == "UNKNOWN" or lacks a CVSS score,
+       the correlator automatically queries GitHub Security Advisories
+       (/advisories/{ghsa_id}) and OSV Detail (/v1/vulns/{id}) to fetch
+       missing severity, CVSS scores/vectors, descriptions, and reference URLs.
+  3. Live Open-Source Reference Advisories Feed (routes.py & ScanResultsView.jsx):
+     - Added GET /api/v1/scans/{scan_id}/live-references which automatically
+       fetches matching advisories from the local Intelligence Dataset and live
+       GitHub Advisory Database (pip) feed, plus links to OSV, PyPA, and CISA
+       KEV for client reference.
+  4. CISA KEV & FIRST EPSS Enrichment (backend/app/services/kev_epss_service.py):
+     - Enriches confirmed CVEs with CISA Known Exploited Vulnerabilities status
+       and FIRST EPSS exploitation probability as separate metadata fields
+       (never counted as extra vulnerabilities).
+
+C. Safer Dependency Alternatives & AI Latest Dependency Check
+  1. Fixed Safer Alternatives (backend/app/services/alternatives_service.py):
+     - Parallelized PyPI version/metadata lookups (asyncio.Semaphore(8)).
+     - Added automatic OSV verification of every recommended upgrade version so
+       users see whether the target version has 0 known OSV advisories.
+     - Fixed handling of unknown/unpinned current versions.
+  2. AI Latest Dependency Reference Check (ai_routes.py & SaferAlternativesView.jsx):
+     - Added POST /api/v1/scans/{scan_id}/ai-dependency-check and the
+       "AI Latest Dependency Check" button in the Safer Alternatives tab.
+     - Compares scanned packages against the latest stable PyPI releases and
+       checks OSV clean status, generating a reference table with suggested
+       requirements.txt pins (e.g., package==latest_version) and AI notes
+       strictly labeled as "AI Reference Only — Manual Review Required".
+
+D. Continuous Intelligence Dataset, RAG & Static Analysis (Backend Engine)
+  1. Incremental Intelligence Adapters (backend/app/services/intelligence_adapters.py):
+     - Implemented ETag / Last-Modified / SHA-256 content-hash deduplicated
+       adapters for GitHub Advisories, PyPA Advisory DB, CVE List V5, GitHub
+       Security Lab, Openwall oss-security, CISA KEV, PyPI updates, and
+       configurable RSS/Atom feeds (XXE-safe via defusedxml).
+  2. Local Security Intelligence Dataset & Hybrid Search (intelligence_models.py & intelligence_search.py):
+     - Added IntelligenceSource, IntelligenceDocument, IntelligenceSyncRun,
+       AdvisoryEvidence, PackageIntelligenceMatch, EmergingFinding (Category B),
+       PotentialWeakness (Category C), FindingReview, FindingStatusHistory, and
+       StaticAnalysisResult tables.
+     - Implemented SQLite FTS5 BM25 keyword search + TF-IDF cosine similarity
+       fused via Reciprocal Rank Fusion (RRF).
+  3. Evidence-Driven RAG Engine (backend/app/services/rag_engine.py):
+     - Grounded in retrieved intelligence documents with deterministic PEP 440
+       version applicability checks, indirect prompt-injection sanitization,
+       citation validation, and explicit abstention ("Insufficient evidence to
+       establish a vulnerability.") when no evidence exists.
+     - Includes opt-in AST-based static security analysis (Category C).
+
+E. Frontend UX, Layout & Direct Access
+  1. Static Left Sidebar (frontend/src/index.css):
+     - Updated .sidebar to position: sticky; top: 0; height: 100vh so the
+       left navigation stays fixed while scrolling.
+  2. Streamlined Left Navigation (frontend/src/components/Sidebar.jsx):
+     - Removed unused/cluttered items and retained the 7 core operational tabs:
+       Overview, New Scan, Verified Vulnerabilities, Dependency Inventory,
+       Safer Alternatives, Reports, and Scan History.
+  3. Direct Console Access (App.jsx, Navbar.jsx, security.py):
+     - Removed the login gate from /app so the scanner console opens directly
+       without requiring sign-in, while preserving backend JWT/Argon2id/Fernet
+       security infrastructure and cross-user isolation for authenticated API
+       clients.
+  4. Dashboard Chart Fix (frontend/src/components/DashboardView.jsx):
+     - Fixed severity counts fallback so newly completed scans display accurate
+       Critical/High/Medium/Low/Info counts immediately.
+
+F. Configuration, Migrations & Deployment Readiness
+  - Fixed Windows DEBUG=release Pydantic boolean parsing crash in config.py.
+  - Normalized relative SQLite database paths to project root.
+  - Added Alembic database migrations (alembic.ini, backend/alembic/).
+  - Added Dockerfile.backend, Dockerfile.frontend, docker-compose.yml,
+    nginx.conf, SecurityHeadersMiddleware, and MultiFernet field encryption.
+
+3. HOW THE SYSTEM WORKS (END-TO-END WORKFLOW)
+--------------------------------------------------------------------------------
+Step 1 - Manifest Ingestion:
+  User uploads or pastes requirements.txt, pyproject.toml, poetry.lock,
+  Pipfile.lock, or CycloneDX JSON in the New Scan view. The parser validates
+  file size, rejects untrusted URLs, evaluates environment markers, and
+  normalizes package names per PEP 503.
+
+Step 2 - Transitive Dependency Resolution:
+  The resolver queries PyPI release metadata concurrently (no code execution)
+  to resolve direct and transitive packages up to depth 3, building Package
+  URLs (PURLs) and detecting dependency cycles.
+
+Step 3 - CycloneDX SBOM Generation:
+  cyclonedx-python-lib generates an OWASP CycloneDX v1.4/v1.5 JSON document
+  containing all resolved components, PURLs, and dependency edges, saved to
+  output/bom.json and downloadable per scan.
+
+Step 4 - Vulnerability Scanning & Canonical Correlation:
+  The scanner queries Google OSV concurrently, enriches CVEs with NIST NVD
+  CVSS v3.1 scores, CISA KEV exploitation status, and FIRST EPSS scores, and
+  clusters aliases (CVE/GHSA/PYSEC) using connected-component graph grouping
+  to eliminate duplicate counting. Any UNKNOWN findings trigger automatic
+  lookups against GitHub Security Advisories and OSV full records.
+
+Step 5 - Persistence & Reporting:
+  The scan, components, and canonical vulnerabilities are persisted in a single
+  atomic database transaction. Users can inspect results, view the Live
+  Open-Source Reference Feed, run Safer Alternatives + AI Latest Dependency
+  Check, and export PDF, CSV, or JSON compliance reports.
+
+4. HOW AI IS USED IN SECURESBOM
+--------------------------------------------------------------------------------
+SecureSBOM follows a strict "AI-Assisted, Never Authoritative" architecture:
+
+1. Strict Three-Category Separation:
+   - Category A (Confirmed Vulnerabilities): Deterministic OSV/NVD/KEV/EPSS
+     matches only. AI never modifies or inflates Category A counts.
+   - Category B (Emerging Vulnerability Intelligence): Evidence-grounded RAG
+     findings from public advisories, clearly labeled as non-confirmed.
+   - Category C (Potential Weaknesses): Static AST pattern checks and AI
+     hypotheses requiring human verification.
+
+2. AI Latest Dependency Reference Check (in Safer Alternatives):
+   - Checks scanned dependencies against live PyPI latest stable versions and
+     OSV status, generating AI-assisted upgrade reference pins and notes for
+     client review without modifying project files.
+
+3. Evidence-Driven RAG Pipeline:
+   - Retrieves relevant intelligence via SQLite FTS5 + TF-IDF cosine hybrid
+     search, verifies PEP 440 version applicability deterministically, strips
+     indirect prompt-injection directives from untrusted advisories, validates
+     citations, and abstains when evidence is insufficient.
+
+4. Configurable Providers (Zero Mandatory Paid Keys):
+   - Supports No-AI / deterministic mode (default), Local Ollama / llama.cpp,
+     OpenAI-compatible endpoints, Google Gemini, and an explicit mock provider.
+
+5. TOOLS, TECHNOLOGIES, LIBRARIES & APIS USED
+--------------------------------------------------------------------------------
+Backend:
+  - Python 3.13, FastAPI, Uvicorn (ASGI), Starlette
+  - SQLAlchemy 2.0, Alembic, SQLite (FTS5 + aiosqlite) / PostgreSQL-ready
+  - Pydantic v2, pydantic-settings, httpx (async HTTP)
+  - packaging (PEP 440/503/508), packageurl-python, cyclonedx-python-lib
+  - cryptography (MultiFernet), argon2-cffi (Argon2id), PyJWT, defusedxml
+  - scikit-learn (TF-IDF cosine retrieval), reportlab (PDF reports), slowapi
+
+Frontend:
+  - React 19, Vite 8, React Router DOM v7
+  - Tailwind CSS v4 + custom dark cybersecurity CSS tokens
+  - Recharts (severity donut charts), Framer Motion, Lenis, Lucide React
+
+External APIs & Standards:
+  - Google OSV API (api.osv.dev)
+  - NIST NVD API 2.0 (services.nvd.nist.gov)
+  - GitHub Security Advisories REST API (api.github.com/advisories)
+  - PyPI JSON API (pypi.org/pypi/{pkg}/json)
+  - CISA KEV Catalog & FIRST EPSS API
+  - OWASP CycloneDX v1.4/v1.5 & FIRST CVSS v3.1
+
+DevOps & Testing:
+  - pytest, pytest-asyncio, FastAPI TestClient
+  - Docker, Docker Compose, Nginx reverse proxy
+
+6. VERIFIED TEST & BUILD STATUS
+--------------------------------------------------------------------------------
+- Full Automated Backend & Integration Suite (pytest tests/ backend/tests/ -q):
+  97 passed in 57.09s (prior to latest UI-only/alternatives update).
+- Alternatives Unit & Verification Suite (pytest tests/test_dependency_alternatives.py -q):
+  5 passed in 1.02s (after latest alternatives update).
+- Frontend Production Build (npm --prefix frontend run build):
+  Passed in 837ms (0 errors, dist/assets/index-CmD4NxgJ.js).
+- Alembic Migration Status:
+  afd23ef4e178 (head).
+================================================================================

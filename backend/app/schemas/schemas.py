@@ -4,7 +4,8 @@ from datetime import datetime
 
 class ScanRequest(BaseModel):
     project_name: str = Field(default="My Python Project", description="Name of the project being scanned")
-    requirements_content: str = Field(..., description="Raw content of requirements.txt")
+    requirements_content: str = Field(..., description="Raw content of manifest or CycloneDX SBOM")
+    manifest_filename: str = Field(default="requirements.txt", description="Original manifest filename for format detection")
 
 class ComponentSchema(BaseModel):
     id: Optional[int] = None
@@ -34,6 +35,10 @@ class VulnerabilitySchema(BaseModel):
     affected_range: Optional[str] = None
     fixed_version: Optional[str] = None
     references: List[str] = []
+    is_kev: bool = False
+    kev_date_added: Optional[str] = None
+    epss_score: Optional[float] = None
+    epss_percentile: Optional[float] = None
 
 class ScanSummarySchema(BaseModel):
     scan_id: int
@@ -42,6 +47,14 @@ class ScanSummarySchema(BaseModel):
     total_deps: int
     direct_deps: int
     transitive_deps: int
+    total_scanned: Optional[int] = None
+    total_direct_deps: Optional[int] = None
+    total_transitive_deps: Optional[int] = None
+    direct_deps_count: Optional[int] = None
+    transitive_deps_count: Optional[int] = None
+    total_canonical_vulnerabilities: Optional[int] = None
+    total_raw_advisories: Optional[int] = None
+    vulnerable_components_count: Optional[int] = None
     unique_vuln_count: int
     advisory_record_count: int
     affected_components_count: int
@@ -53,6 +66,9 @@ class ScanSummarySchema(BaseModel):
     info_count: int
     unknown_count: int
     scan_duration_seconds: float
+    coverage_status: str = "complete"
+    manifest_format: str = "requirements.txt"
+    resolution_completeness: str = "complete"
 
 class ScanResponse(BaseModel):
     summary: ScanSummarySchema

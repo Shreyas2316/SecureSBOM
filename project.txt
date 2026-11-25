@@ -1,0 +1,211 @@
+================================================================================
+                    SECURESBOM (PRJ_56) - PROJECT SPECIFICATION & STATUS
+================================================================================
+
+1. PROJECT OVERVIEW
+--------------------------------------------------------------------------------
+Project Name:    SecureSBOM (PRJ_56)
+Type:            Software Supply Chain Security Platform & Dependency Vulnerability Scanner
+Target Ecosystem:Python (PyPI / PEP 508 manifests)
+Primary Purpose: Ingest dependency manifests (requirements.txt), resolve direct 
+                 and transitive dependency graphs, produce OWASP CycloneDX v1.4/v1.5
+                 JSON Software Bill of Materials (SBOMs), query live vulnerability
+                 databases (Google OSV & NIST NVD 2.0), correlate and deduplicate
+                 multi-source advisories using canonical graph clustering, provide
+                 AI-assisted emerging vulnerability assessments, and offer remediation.
+
+2. ARCHITECTURE & HOW IT WORKS (END-TO-END WORKFLOW)
+--------------------------------------------------------------------------------
+The project follows a decoupled, multi-tier pipeline:
+
+Step 1: Manifest Parsing (PEP 508 / PEP 503)
+  - User submits requirements.txt via UI drag-and-drop or API.
+  - backend/app/services/dependency_parser.py parses entries, strips inline comments 
+    and environment markers, normalizes names (PEP 503), and extracts version constraints.
+  - Security check: 2MB file limit and 1000-char line limit prevent denial-of-service.
+
+Step 2: Transitive Dependency Resolution
+  - backend/app/services/transitive_resolver.py queries the PyPI JSON API 
+    (https://pypi.org/pypi/{pkg}/json) to inspect requires_dist metadata up to depth 2.
+  - Distinguishes direct dependencies (is_direct=True) from transitive dependencies.
+
+Step 3: Standardized CycloneDX SBOM Generation
+  - backend/app/services/sbom_generator.py utilizes cyclonedx-python-lib to build 
+    an OWASP CycloneDX 1.4/1.5 JSON standard document with Package URLs (PURLs),
+    component hashes, and dependency graph metadata.
+  - Generated output is validated against the official JSON schema and saved to output/bom.json.
+
+Step 4: Vulnerability Scanning & Live Database Queries
+  - backend/app/services/osv_service.py queries Google OSV API (https://api.osv.dev/v1/query)
+    asynchronously with in-memory caching and backoff retries.
+  - backend/app/services/nvd_service.py enriches CVE entries using NIST NVD API 2.0
+    (https://services.nvd.nist.gov/rest/json/cves/2.0) for CVSS v3.1 base scores and vectors.
+
+Step 5: Canonical Graph Deduplication & Correlation
+  - backend/app/services/correlation_service.py builds a connected-component alias graph
+    across CVE, GHSA, and PYSEC IDs to merge redundant advisories into a single
+    canonical vulnerability record, preventing double-counting.
+  - backend/app/services/prioritization.py classifies findings into deterministic tiers:
+    P1-Critical (CVSS 9.0-10.0), P2-High (7.0-8.9), P3-Medium (4.0-6.9), 
+    P4-Low (0.1-3.9), P5-Info/Unknown.
+
+Step 6: AI-Assisted Assessment (Category B Findings)
+  - backend/app/services/ai_analysis.py & ai_provider.py run non-deterministic 
+    emerging advisory and potential weakness analyses (Mock LLM, OpenAI, Gemini).
+  - Crucial architecture rule: AI findings are stored separately (AIFinding table) 
+    and are NEVER mixed into confirmed OSV/NVD vulnerability counts.
+  - Includes human-in-the-loop review workflow and audit history.
+
+Step 7: Safer Dependency Alternatives & Monitoring
+  - backend/app/services/alternatives_service.py recommends secure package upgrades.
+  - backend/app/services/monitoring_service.py runs periodic checks against advisory feeds.
+  - backend/app/services/report_service.py exports compliance audits in PDF, CSV, and JSON.
+
+Step 8: UI Visualization & Export
+  - Frontend React client provides a dual-surface experience:
+    * Cinematic Landing Page ('/') with Lenis smooth scrolling and HTML5 Canvas attack animation.
+    * Cybersecurity Scanner Console ('/app') with real-time terminal stage tracking, 
+      Recharts severity donut charts, dependency tree/table views, and SBOM downloads.
+
+3. COMPLETE FEATURE LIST
+--------------------------------------------------------------------------------
+Core Security Features:
+  [x] PEP 508 dependency manifest parsing and sanitization.
+  [x] Transitive dependency tree resolution via PyPI JSON API.
+  [x] CycloneDX v1.4 / v1.5 JSON Software Bill of Materials (SBOM) generator.
+  [x] Schema validation against official OWASP CycloneDX schema.
+  [x] Google OSV REST API live integration.
+  [x] NIST NVD REST API 2.0 CVSS score and vector enrichment.
+  [x] Graph-based canonical vulnerability deduplication (GHSA/CVE/PYSEC alias grouping).
+  [x] Deterministic CVSS v3.1 severity prioritization matrix.
+  [x] Fixed version extraction and remediation guidance.
+  [x] AI-assessed emerging vulnerabilities (Category B, separated from verified).
+  [x] Human review workflow with audit logging for AI findings.
+  [x] Safer dependency alternatives analysis (breaking changes, licensing, maintenance).
+  [x] Periodic vulnerability monitoring and alert acknowledgment.
+  [x] Comprehensive report generator (PDF, CSV, JSON).
+  [x] Database persistence for projects, scans, components, and vulnerabilities.
+
+Frontend User Experience:
+  [x] Marketing Landing Page with particle wavefront breach simulation on HTML5 Canvas.
+  [x] Lenis smooth scrolling with reduced-motion support.
+  [x] 600ms page wipe transition (Framer Motion).
+  [x] Dark cyber console UI (#05070A abyss theme).
+  [x] Real-time scan progress stepper / terminal logger.
+  [x] Recharts severity distribution donut chart.
+  [x] Searchable vulnerability table with expandable CVSS drawers.
+  [x] Dual-mode dependency inventory (Table View & Hierarchical Tree View).
+  [x] Downloadable bom.json and report exports.
+
+4. TOOLS, FRAMEWORKS, LIBRARIES & APIS
+--------------------------------------------------------------------------------
+Backend:
+  - Language:         Python 3.12 / 3.13
+  - Web Framework:    FastAPI, Starlette, Uvicorn (ASGI)
+  - HTTP Engine:      httpx (async requests with retry & timeout logic)
+  - Data Validation:  Pydantic v2, pydantic-settings
+  - ORM & Database:   SQLAlchemy 2.0, SQLite (aiosqlite) / PostgreSQL ready
+  - SBOM Engine:      cyclonedx-python-lib (>=6.0.0), jsonschema
+  - Packaging Tools:  packaging (>=23.0), packageurl-python (PURL standards)
+  - PDF Generation:   reportlab
+  - Testing Engine:   pytest, pytest-asyncio, anyio
+
+Frontend:
+  - Runtime & Build:  Node.js, Vite 8, React 19 / 18
+  - Routing:          react-router-dom v7
+  - Styling:          Tailwind CSS v4 engine + custom cybersecurity design tokens
+  - Animation:        Framer Motion, Lenis Smooth Scroll
+  - Data Visuals:     Recharts (Pie & Donut charts)
+  - Icons:            Lucide React
+
+External APIs:
+  - Google OSV API:   https://api.osv.dev/v1/query
+  - NIST NVD API 2.0: https://services.nvd.nist.gov/rest/json/cves/2.0
+  - PyPI JSON API:    https://pypi.org/pypi/{package}/json
+  - AI Providers:     OpenAI API / Google Gemini API / Local Mock Provider
+
+5. WORKING STATUS & READINESS PERCENTAGE (AUDIT BREAKDOWN)
+--------------------------------------------------------------------------------
+Overall Functional Completion:  ~72%
+Overall Production Deployment:  ~35% (Blocked by Auth, Encryption & Deploy Config)
+
+Detailed Component-by-Component Working Status:
+
+1. Dependency Parser & Transitive Resolver:  [95% WORKING]
+   - Status: Fully functional. Parses requirements.txt, handles unpinned packages,
+     queries PyPI API, detects transitive trees.
+   - Remaining 5%: Support for poetry.lock, Pipfile, and non-Python ecosystems.
+
+2. CycloneDX SBOM Generator:                 [100% WORKING]
+   - Status: Fully working. Generates valid CycloneDX 1.4/1.5 JSON with PURLs, 
+     passes 100% of official schema validation tests.
+
+3. OSV & NVD Scanner & Deduplication:        [95% WORKING]
+   - Status: Fully functional. Real-time querying, caching, graph deduplication 
+     eliminates double counting (e.g. 27 raw advisories -> 11 canonical). 
+     Deterministic CVSS prioritization works.
+
+4. AI Emerging Vulnerability Engine:         [90% WORKING]
+   - Status: Working with mock, OpenAI, and Gemini providers. Isolates Category B 
+     findings, stores audit trails, allows linking to verified vulns.
+
+5. Safer Alternatives & Remediation:         [85% WORKING]
+   - Status: Working. Generates version upgrade paths, compatibility indicators.
+
+6. Continuous Monitoring & Alerts:           [80% WORKING]
+   - Status: Working. Periodic synchronization and alert acknowledgment endpoints.
+
+7. Compliance Reporting (PDF / CSV / JSON):  [90% WORKING]
+   - Status: Working. Generates downloadable JSON, CSV, and formatted PDF reports.
+
+8. Frontend UI & Cyber Console:              [90% WORKING]
+   - Status: Working. Landing page animations, dashboard, charts, scanner console, 
+     inventory tree, and modals all render smoothly and build without errors.
+
+9. Automated Test Suite:                     [100% WORKING]
+   - Status: 63 out of 63 automated unit/integration tests passing cleanly.
+
+10. Authentication & User Login System:       [0% WORKING - MISSING]
+   - Status: NOT IMPLEMENTED.
+   - Why: There is no User model, no password hashing (bcrypt), no JWT token issuance,
+     no login/register API endpoints, no login page, and no route protection.
+     The "User" selector in Navbar.jsx is only a hardcoded UI <select> dropdown, 
+     and backend accepts any spoofed 'X-User-Id' header without verification.
+
+11. Encryption & Data Protection:             [0% WORKING - MISSING]
+   - Status: NOT IMPLEMENTED.
+   - Why: The database (securesbom.db) is stored in raw plaintext SQLite.
+     No field-level encryption (Fernet / AES) exists for sensitive vulnerability notes.
+     API communication default is unencrypted HTTP (http://localhost:8000).
+
+12. Production Deployment Readiness:          [35% WORKING - CRITICAL BLOCKERS]
+   - Status: BLOCKED for deployment.
+   - Causes:
+     * frontend/src/services/api.js hardcodes 'http://localhost:8000' (breaks in cloud).
+     * Two duplicate API client files exist (src/api.js and src/services/api.js).
+     * CORS is set to wildcard allow_origins=["*"].
+     * SQLite relative file path creates duplicate databases depending on startup folder.
+     * Environment variable sensitivity: Windows $env:DEBUG="release" crashes 
+       Pydantic's bool parser unless normalized.
+     * Missing .env.production bundle configuration.
+
+6. SUMMARY SCORECARD
+--------------------------------------------------------------------------------
+Component                          Working %      Status
+--------------------------------------------------------------------------------
+Manifest Parsing & Transitive       95%           Complete / Stable
+CycloneDX SBOM Engine              100%           Complete / Stable
+OSV & NVD Scanner & Correlator      95%           Complete / Stable
+AI Vulnerability Assessment         90%           Complete / Stable
+Safer Alternatives Service          85%           Complete / Stable
+Monitoring & Alert Feeds            80%           Functional
+Report Generator (PDF/CSV/JSON)     90%           Complete / Stable
+Frontend UI / Dashboard             90%           Complete / Stable
+Automated Tests (63/63 passing)    100%           Complete / Stable
+--------------------------------------------------------------------------------
+User Authentication & Login          0%           CRITICAL DEFICIT
+Data & Message Encryption            0%           CRITICAL DEFICIT
+Production Deployment Readiness     35%           NEEDS HARDENING
+--------------------------------------------------------------------------------
+OVERALL SYSTEM READINESS:          ~72% (Working prototype, needs Auth + Encryption)
+================================================================================

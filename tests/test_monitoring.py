@@ -1,16 +1,27 @@
+import uuid
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.database import SessionLocal
-from app.models import (
-    MonitoringSource, MonitoringAlert, ProcessedAdvisory
-)
+from app.models import MonitoringSource, MonitoringAlert
 
 client = TestClient(app)
 
 
+def _auth_headers():
+    uname = f"mon_{uuid.uuid4().hex[:8]}"
+    res = client.post("/api/v1/auth/register", json={
+        "username": uname,
+        "email": f"{uname}@example.com",
+        "password": "StrongPassword123!",
+    })
+    assert res.status_code == 201
+    return {"Authorization": f"Bearer {res.json()['access_token']}"}
+
+
 def test_monitoring_status_endpoint():
-    res = client.get("/api/v1/monitoring/status")
+    headers = _auth_headers()
+    res = client.get("/api/v1/monitoring/status", headers=headers)
     assert res.status_code == 200
     data = res.json()
     assert "source_name" in data
@@ -19,9 +30,9 @@ def test_monitoring_status_endpoint():
 
 
 def test_monitoring_alerts_and_acknowledgment():
+    headers = _auth_headers()
     db = SessionLocal()
     try:
-        # Ensure monitoring source exists
         source = db.query(MonitoringSource).filter(MonitoringSource.name == "OSV PyPI").first()
         if not source:
             source = MonitoringSource(
@@ -34,8 +45,6 @@ def test_monitoring_alerts_and_acknowledgment():
             db.commit()
             db.refresh(source)
 
-        # Create a test alert with valid source_id
-        import uuid
         adv_id = f"OSV-TEST-{uuid.uuid4().hex[:6]}"
         alert = MonitoringAlert(
             source_id=source.id,
@@ -51,18 +60,15 @@ def test_monitoring_alerts_and_acknowledgment():
         db.refresh(alert)
         alert_id = alert.id
 
-        # Query unacknowledged alerts
-        res = client.get("/api/v1/monitoring/alerts?acknowledged=false")
+        res = client.get("/api/v1/monitoring/alerts?acknowledged=false", headers=headers)
         assert res.status_code == 200
         data = res.json()
         assert any(a["id"] == alert_id for a in data["alerts"])
 
-        # Acknowledge alert
-        ack_res = client.patch(f"/api/v1/monitoring/alerts/{alert_id}/acknowledge")
+        ack_res = client.patch(f"/api/v1/monitoring/alerts/{alert_id}/acknowledge", headers=headers)
         assert ack_res.status_code == 200
         assert ack_res.json()["acknowledged"] is True
 
-        # Verify in DB
         db.refresh(alert)
         assert alert.is_acknowledged is True
     finally:

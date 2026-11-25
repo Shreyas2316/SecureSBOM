@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { 
   Download, 
   Search, 
@@ -11,10 +11,12 @@ import {
   Boxes, 
   FileCode,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  Globe,
+  RefreshCw
 } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
-import { getDownloadBomUrl, getDownloadReportUrl, downloadFileAsJson } from "../api";
+import { getDownloadBomUrl, getDownloadReportUrl, downloadFileAsJson, fetchLiveReferences } from "../api";
 import SeverityBadge from "./ui/SeverityBadge";
 
 export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate }) {
@@ -23,10 +25,29 @@ export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate
   const [hasFixFilter, setHasFixFilter] = useState(false);
   const [sourceFilter, setSourceFilter] = useState("ALL");
   const [expandedRows, setExpandedRows] = useState(new Set());
+  const [liveRefs, setLiveRefs] = useState(null);
+  const [loadingRefs, setLoadingRefs] = useState(false);
 
   const report = scanData?.report || scanData;
   const summary = report?.summary || {};
   const scanId = report?.scan_id || summary?.scan_id || scanData?.scan_id || "";
+
+  const loadLiveRefs = async () => {
+    if (!scanId) return;
+    setLoadingRefs(true);
+    try {
+      const data = await fetchLiveReferences(scanId);
+      setLiveRefs(data);
+    } catch {
+      // ignore non-fatal network errors
+    } finally {
+      setLoadingRefs(false);
+    }
+  };
+
+  useEffect(() => {
+    loadLiveRefs();
+  }, [scanId]);
   const canonicalVulns = report?.canonical_vulnerabilities || report?.vulnerabilities || [];
   const sevCounts = summary.vulnerabilities_by_severity || {
     CRITICAL: summary.critical_count || 0,
@@ -37,6 +58,38 @@ export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate
     UNKNOWN: summary.unknown_count || 0,
   };
   const sourceStatus = report?.source_status || {};
+
+  // Compute metrics with complete alias and component-array fallback
+  const depsList = report?.dependencies || report?.components || [];
+  const totalScanned = summary.total_scanned 
+    ?? summary.total_deps 
+    ?? (depsList.length > 0 ? depsList.length : 0);
+
+  const directDeps = summary.total_direct_deps 
+    ?? summary.direct_deps 
+    ?? summary.direct_deps_count 
+    ?? (depsList.length > 0 ? depsList.filter(d => d.is_direct).length : 0);
+
+  const transitiveDeps = summary.total_transitive_deps 
+    ?? summary.transitive_deps 
+    ?? summary.transitive_deps_count 
+    ?? (depsList.length > 0 ? depsList.filter(d => !d.is_direct).length : 0);
+
+  const canonicalVulnsCount = summary.total_canonical_vulnerabilities 
+    ?? summary.canonical_vulns_count 
+    ?? summary.unique_vuln_count 
+    ?? summary.vuln_count 
+    ?? canonicalVulns.length;
+
+  const rawAdvisoriesCount = summary.total_raw_advisories 
+    ?? summary.advisory_record_count 
+    ?? summary.raw_advisories_count 
+    ?? summary.total_vulnerabilities 
+    ?? 0;
+
+  const vulnComponentsCount = summary.vulnerable_components_count 
+    ?? summary.affected_components_count 
+    ?? 0;
 
   // Donut chart dataset
   const chartData = [
@@ -149,19 +202,19 @@ export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate
       >
         <div className="stat-card stat-accent">
           <span className="stat-label">Scanned Packages</span>
-          <div className="stat-value">{summary.total_scanned || 0}</div>
-          <span className="stat-sub">{summary.total_direct_deps || 0} Direct · {summary.total_transitive_deps || 0} Transitive</span>
+          <div className="stat-value">{totalScanned}</div>
+          <span className="stat-sub">{directDeps} Direct · {transitiveDeps} Transitive</span>
         </div>
 
         <div className="stat-card stat-danger">
           <span className="stat-label">Canonical Findings</span>
-          <div className="stat-value">{summary.total_canonical_vulnerabilities || canonicalVulns.length}</div>
-          <span className="stat-sub">From {summary.total_raw_advisories || summary.total_vulnerabilities || 0} raw advisories</span>
+          <div className="stat-value">{canonicalVulnsCount}</div>
+          <span className="stat-sub">From {rawAdvisoriesCount} raw advisories</span>
         </div>
 
         <div className="stat-card stat-warning">
           <span className="stat-label">Affected Components</span>
-          <div className="stat-value">{summary.vulnerable_components_count || 0}</div>
+          <div className="stat-value">{vulnComponentsCount}</div>
           <span className="stat-sub">Unique vulnerable libraries</span>
         </div>
 
@@ -522,6 +575,78 @@ export default function ScanResultsView({ scanData, onOpenVulnDetail, onNavigate
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+
+      {/* Live Open-Source Reference Advisories & Unknown Vulnerability Enrichment */}
+      <div className="glass-panel" style={{ padding: "1.5rem", marginTop: "1.5rem" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem", marginBottom: "1rem" }}>
+          <div>
+            <h3 style={{ fontSize: "1.05rem", display: "flex", alignItems: "center", gap: "8px", margin: 0 }}>
+              <Globe size={18} color="#00F5FF" />
+              Live Open-Source Reference Advisories & Unknown Vuln Feed
+            </h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
+              Automatically fetched from public open-source feeds (GitHub Advisory Database, OSV, PyPA, CISA KEV) for client reference.
+            </p>
+          </div>
+          <button type="button" className="btn btn-secondary" onClick={loadLiveRefs} disabled={loadingRefs} style={{ fontSize: "0.8rem" }}>
+            <RefreshCw size={14} className={loadingRefs ? "spin" : ""} />
+            <span>{loadingRefs ? "Fetching..." : "Refresh Live Feed"}</span>
+          </button>
+        </div>
+
+        {liveRefs?.unknown_vulnerabilities?.length > 0 && (
+          <div style={{ marginBottom: "1rem", padding: "0.9rem", borderRadius: "8px", border: "1px solid rgba(255, 184, 0, 0.35)", background: "rgba(255, 184, 0, 0.06)" }}>
+            <div style={{ fontWeight: 600, fontSize: "0.85rem", color: "#FFB800", marginBottom: "6px" }}>
+              Unclassified / Unknown Severity Findings ({liveRefs.unknown_vulnerabilities.length})
+            </div>
+            {liveRefs.unknown_vulnerabilities.map((u, idx) => (
+              <div key={idx} style={{ fontSize: "0.8rem", color: "#E2E8F0", marginBottom: "4px" }}>
+                <strong>{u.canonical_id}</strong> ({u.package_name}@{u.package_version}): {u.summary || "Pending CVSS scoring"} —{" "}
+                <a href={u.references?.[0] || `https://osv.dev/vulnerability/${u.canonical_id}`} target="_blank" rel="noreferrer" style={{ color: "#00F5FF" }}>
+                  View Advisory
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {liveRefs?.live_advisories?.length > 0 ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "0.85rem", marginBottom: "1rem" }}>
+            {liveRefs.live_advisories.map((adv, idx) => (
+              <div key={idx} style={{ padding: "0.9rem", borderRadius: "8px", border: "1px solid var(--border-color)", background: "rgba(255,255,255,0.02)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "#00F5FF", fontWeight: 700 }}>{adv.advisory_id}</span>
+                  <span className="badge badge-info" style={{ fontSize: "0.68rem" }}>{adv.severity}</span>
+                </div>
+                <div style={{ fontWeight: 600, fontSize: "0.85rem", color: "#fff", marginBottom: "4px" }}>{adv.title}</div>
+                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "6px" }}>
+                  Package: <strong>{adv.package_name}</strong> · {adv.source}
+                </div>
+                <a href={adv.url} target="_blank" rel="noreferrer" style={{ fontSize: "0.76rem", color: "#00F5FF", display: "inline-flex", alignItems: "center", gap: "4px", textDecoration: "none" }}>
+                  <span>Open Reference Report</span>
+                  <ExternalLink size={12} />
+                </a>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
+            {loadingRefs ? "Loading live open-source advisories..." : "No additional live advisories loaded yet."}
+          </p>
+        )}
+
+        {liveRefs?.reference_sources?.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border-color)", fontSize: "0.78rem" }}>
+            <span style={{ color: "var(--text-muted)" }}>Public Feeds:</span>
+            {liveRefs.reference_sources.map((src, i) => (
+              <a key={i} href={src.url} target="_blank" rel="noreferrer" style={{ color: "#38BDF8", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                <span>{src.name}</span>
+                <ExternalLink size={11} />
+              </a>
+            ))}
           </div>
         )}
       </div>

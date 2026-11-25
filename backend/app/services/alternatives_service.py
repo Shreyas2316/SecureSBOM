@@ -4,6 +4,7 @@ Identifies safer versions or replacement packages for vulnerable dependencies.
 Uses PyPI metadata and authoritative fixed-version data only.
 Does NOT automatically change project files.
 """
+import asyncio
 import logging
 from typing import Optional, List, Dict, Any
 
@@ -15,55 +16,65 @@ logger = logging.getLogger("securesbom.alternatives")
 PYPI_BASE = "https://pypi.org/pypi"
 
 
-async def fetch_all_versions(package_name: str) -> List[str]:
-    """Fetch all released versions of a package from PyPI."""
+async def fetch_all_versions(
+    package_name: str,
+    client: Optional[httpx.AsyncClient] = None,
+) -> List[str]:
+    """Fetch all released stable non-yanked versions of a package from PyPI."""
+    url = f"{PYPI_BASE}/{package_name}/json"
     try:
-        url = f"{PYPI_BASE}/{package_name}/json"
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                releases = resp.json().get("releases", {})
-                # Filter out pre-releases and yanked versions
-                stable = []
-                for ver_str, files in releases.items():
-                    try:
-                        v = Version(ver_str)
-                        if not v.is_prerelease and not v.is_devrelease:
-                            # Check none are yanked
-                            if not any(f.get("yanked", False) for f in files):
-                                stable.append(ver_str)
-                    except InvalidVersion:
-                        continue
-                return stable
+        if client is not None:
+            resp = await client.get(url, timeout=8.0)
+        else:
+            async with httpx.AsyncClient(timeout=8.0) as local_client:
+                resp = await local_client.get(url)
+
+        if resp.status_code == 200:
+            releases = resp.json().get("releases", {})
+            stable = []
+            for ver_str, files in releases.items():
+                try:
+                    v = Version(ver_str)
+                    if not v.is_prerelease and not v.is_devrelease:
+                        if not any(f.get("yanked", False) for f in files):
+                            stable.append(ver_str)
+                except InvalidVersion:
+                    continue
+            return stable
     except Exception as exc:
         logger.debug("PyPI versions fetch failed for %s: %s", package_name, exc)
     return []
 
 
-async def fetch_package_info(package_name: str, version: Optional[str] = None) -> Optional[Dict[str, Any]]:
+async def fetch_package_info(
+    package_name: str,
+    version: Optional[str] = None,
+    client: Optional[httpx.AsyncClient] = None,
+) -> Optional[Dict[str, Any]]:
     """Fetch PyPI package info for a specific version or latest."""
+    url = f"{PYPI_BASE}/{package_name}/{version}/json" if version else f"{PYPI_BASE}/{package_name}/json"
     try:
-        if version:
-            url = f"{PYPI_BASE}/{package_name}/{version}/json"
+        if client is not None:
+            resp = await client.get(url, timeout=8.0)
         else:
-            url = f"{PYPI_BASE}/{package_name}/json"
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                data = resp.json()
-                info = data.get("info", {})
-                return {
-                    "name": info.get("name", package_name),
-                    "version": info.get("version", ""),
-                    "summary": (info.get("summary") or "")[:300],
-                    "license": info.get("license") or "Unknown",
-                    "requires_python": info.get("requires_python") or "",
-                    "home_page": info.get("home_page") or "",
-                    "project_urls": info.get("project_urls") or {},
-                    "yanked": info.get("yanked", False),
-                    "yanked_reason": info.get("yanked_reason") or "",
-                    "release_url": f"https://pypi.org/project/{package_name}/{info.get('version', '')}/",
-                }
+            async with httpx.AsyncClient(timeout=8.0) as local_client:
+                resp = await local_client.get(url)
+
+        if resp.status_code == 200:
+            data = resp.json()
+            info = data.get("info", {})
+            return {
+                "name": info.get("name", package_name),
+                "version": info.get("version", ""),
+                "summary": (info.get("summary") or "")[:300],
+                "license": info.get("license") or "Unknown",
+                "requires_python": info.get("requires_python") or "",
+                "home_page": info.get("home_page") or "",
+                "project_urls": info.get("project_urls") or {},
+                "yanked": info.get("yanked", False),
+                "yanked_reason": info.get("yanked_reason") or "",
+                "release_url": f"https://pypi.org/project/{package_name}/{info.get('version', '')}/",
+            }
     except Exception as exc:
         logger.debug("PyPI info fetch failed for %s@%s: %s", package_name, version, exc)
     return None
@@ -76,21 +87,23 @@ def find_safe_upgrade(
 ) -> Optional[str]:
     """
     Find the smallest stable version >= fixed_version that is > current.
-    Returns None if no safe version can be identified.
+    If current_version_str is 'unknown' or invalid, falls back to fixed_version_str or latest stable.
     """
     if not all_versions:
         return None
 
+    current = None
     try:
-        current = Version(current_version_str)
+        if current_version_str and current_version_str not in ("unknown", "unpinned", "unresolved"):
+            current = Version(current_version_str)
     except InvalidVersion:
-        return None
+        current = None
 
     candidates = []
     for vs in all_versions:
         try:
             v = Version(vs)
-            if v <= current:
+            if current is not None and v <= current:
                 continue
             if fixed_version_str:
                 try:
@@ -106,7 +119,6 @@ def find_safe_upgrade(
     if not candidates:
         return None
 
-    # Return smallest qualifying version (minimal upgrade)
     return str(min(candidates))
 
 
@@ -117,6 +129,7 @@ async def build_alternatives(
     fixed_version_from_advisory: Optional[str],
     versions_cache: Optional[Dict[str, List[str]]] = None,
     info_cache: Optional[Dict[str, Dict[str, Any]]] = None,
+    client: Optional[httpx.AsyncClient] = None,
 ) -> List[Dict[str, Any]]:
     """
     Build a list of alternative recommendations for a vulnerable dependency.
@@ -127,11 +140,10 @@ async def build_alternatives(
     if versions_cache is not None and package_name in versions_cache:
         all_versions = versions_cache[package_name]
     else:
-        all_versions = await fetch_all_versions(package_name)
+        all_versions = await fetch_all_versions(package_name, client=client)
         if versions_cache is not None:
             versions_cache[package_name] = all_versions
 
-    # ── Recommendation 1: Known fixed version upgrade ──
     safe_upgrade = find_safe_upgrade(package_version, fixed_version_from_advisory, all_versions)
 
     if safe_upgrade:
@@ -139,7 +151,7 @@ async def build_alternatives(
         if info_cache is not None and cache_key in info_cache:
             upgrade_info = info_cache[cache_key]
         else:
-            upgrade_info = await fetch_package_info(package_name, safe_upgrade)
+            upgrade_info = await fetch_package_info(package_name, safe_upgrade, client=client)
             if info_cache is not None and upgrade_info:
                 info_cache[cache_key] = upgrade_info
         try:
@@ -158,9 +170,9 @@ async def build_alternatives(
             "alternative_package": None,
             "alternative_version": None,
             "compatibility_info": (
-                f"Major version upgrade — breaking changes possible. Review changelog before applying."
+                "Major version upgrade — breaking changes possible. Review changelog before applying."
                 if is_major_bump
-                else f"Same major version upgrade. Lower compatibility risk."
+                else "Same major version upgrade. Lower compatibility risk."
             ),
             "known_vulns_in_alternative": "Not checked — verify against OSV/NVD before applying.",
             "migration_complexity": "high" if is_major_bump else "low",
@@ -213,38 +225,97 @@ async def get_alternatives_for_scan(
     vulnerabilities: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """
-    Generate alternatives for all vulnerabilities in a scan.
-    Each vuln is processed independently.
+    Generate and OSV-verify alternatives for all vulnerabilities in a scan.
+    Pre-fetches PyPI versions once per unique package using a single shared HTTP client.
     """
-    all_alternatives = []
+    unique_items = []
     seen = set()
-    versions_cache: Dict[str, List[str]] = {}
-    info_cache: Dict[str, Dict[str, Any]] = {}
+    unique_packages = set()
 
     for vuln in vulnerabilities:
         pkg = vuln.get("affected_component_name") or vuln.get("package_name", "")
         ver = vuln.get("affected_component_version") or vuln.get("package_version", "")
         canonical_id = vuln.get("canonical_id") or vuln.get("vulnerability_canonical_id")
         fixed_ver = vuln.get("fixed_version")
-
         key = f"{pkg}@{ver}@{canonical_id}"
-        if key in seen:
-            continue
-        seen.add(key)
+        if pkg and ver and key not in seen:
+            seen.add(key)
+            unique_packages.add(pkg)
+            unique_items.append((pkg, ver, canonical_id, fixed_ver))
 
-        if not pkg or not ver:
-            continue
+    if not unique_items:
+        return []
 
-        try:
-            alternatives = await build_alternatives(
-                pkg, ver, canonical_id, fixed_ver,
-                versions_cache=versions_cache,
-                info_cache=info_cache
-            )
-            for alt in alternatives:
-                alt["vulnerability_canonical_id"] = canonical_id
-                all_alternatives.append(alt)
-        except Exception as exc:
-            logger.error("Failed to build alternatives for %s@%s: %s", pkg, ver, exc)
+    versions_cache: Dict[str, List[str]] = {}
+    info_cache: Dict[str, Dict[str, Any]] = {}
+
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        sem = asyncio.Semaphore(10)
+
+        # 1. Pre-fetch PyPI release lists ONCE per unique package
+        async def _prefetch_versions(pkg_name: str):
+            async with sem:
+                versions_cache[pkg_name] = await fetch_all_versions(pkg_name, client=client)
+
+        await asyncio.gather(*[_prefetch_versions(p) for p in unique_packages])
+
+        # 2. Pre-fetch info ONCE per unique (pkg, recommended_ver)
+        target_info_pairs = set()
+        for pkg, ver, _, fixed_ver in unique_items:
+            rv = find_safe_upgrade(ver, fixed_ver, versions_cache.get(pkg, []))
+            if rv:
+                target_info_pairs.add((pkg, rv))
+
+        async def _prefetch_info(pair):
+            p_name, p_ver = pair
+            async with sem:
+                info = await fetch_package_info(p_name, p_ver, client=client)
+                if info:
+                    info_cache[f"{p_name}@{p_ver}"] = info
+
+        if target_info_pairs:
+            await asyncio.gather(*[_prefetch_info(p) for p in target_info_pairs])
+
+        # 3. Build alternatives instantaneously from caches
+        all_alternatives: List[Dict[str, Any]] = []
+        for pkg, ver, canonical_id, fixed_ver in unique_items:
+            try:
+                alts = await build_alternatives(
+                    pkg, ver, canonical_id, fixed_ver,
+                    versions_cache=versions_cache,
+                    info_cache=info_cache,
+                    client=client,
+                )
+                for a in alts:
+                    a["vulnerability_canonical_id"] = canonical_id
+                    all_alternatives.append(a)
+            except Exception as exc:
+                logger.error("Failed to build alternatives for %s@%s: %s", pkg, ver, exc)
+
+        # 4. Verify recommended versions against OSV ONCE per unique (pkg, recommended_ver)
+        if target_info_pairs:
+            async def _check_osv(pair):
+                p_name, p_ver = pair
+                async with sem:
+                    try:
+                        resp = await client.post(
+                            "https://api.osv.dev/v1/query",
+                            json={"package": {"name": p_name, "ecosystem": "PyPI"}, "version": p_ver},
+                        )
+                        if resp.status_code == 200:
+                            return pair, len(resp.json().get("vulns", []))
+                    except Exception:
+                        pass
+                    return pair, None
+
+            checked = dict(await asyncio.gather(*[_check_osv(p) for p in target_info_pairs]))
+            for a in all_alternatives:
+                rv = a.get("recommended_version")
+                if rv:
+                    cnt = checked.get((a["package_name"], rv))
+                    if cnt == 0:
+                        a["known_vulns_in_alternative"] = "0 known OSV advisories (verified clean at check time)."
+                    elif isinstance(cnt, int) and cnt > 0:
+                        a["known_vulns_in_alternative"] = f"Warning: {cnt} OSV advisory/advisories still affect v{rv}; consider latest stable."
 
     return all_alternatives

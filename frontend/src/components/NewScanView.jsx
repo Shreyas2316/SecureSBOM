@@ -45,8 +45,9 @@ export default function NewScanView({ onScanComplete }) {
     setErrorMsg(null);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const droppedFile = e.dataTransfer.files[0];
-      if (!droppedFile.name.endsWith(".txt")) {
-        setErrorMsg("Please upload a valid .txt file (e.g. requirements.txt)");
+      const allowed = [".txt", ".toml", ".lock", ".json"];
+      if (!allowed.some((ext) => droppedFile.name.toLowerCase().endsWith(ext))) {
+        setErrorMsg("Please upload a valid manifest (.txt, pyproject.toml, poetry.lock, Pipfile.lock, or CycloneDX .json)");
         return;
       }
       setFile(droppedFile);

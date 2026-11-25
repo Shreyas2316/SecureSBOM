@@ -21,11 +21,11 @@ export default function ScanSummary({ summary }) {
             <Package size={18} color="var(--accent-cyan)" />
           </div>
           <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#ffffff' }}>
-            {summary.total_deps}
+            {summary.total_deps ?? summary.total_scanned ?? 0}
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem', display: 'flex', gap: '0.75rem' }}>
-            <span>Direct: <strong style={{ color: '#ffffff' }}>{summary.direct_deps}</strong></span>
-            <span>Transitive: <strong style={{ color: 'var(--accent-purple)' }}>{summary.transitive_deps}</strong></span>
+            <span>Direct: <strong style={{ color: '#ffffff' }}>{summary.direct_deps ?? summary.total_direct_deps ?? summary.direct_deps_count ?? 0}</strong></span>
+            <span>Transitive: <strong style={{ color: 'var(--accent-purple)' }}>{summary.transitive_deps ?? summary.total_transitive_deps ?? summary.transitive_deps_count ?? 0}</strong></span>
           </div>
         </div>
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { ArrowUp, AlertTriangle, CheckCircle2, HelpCircle, ExternalLink, Download, RefreshCw, Package, ShieldCheck, ShieldAlert } from "lucide-react";
-import { fetchAlternatives, downloadReport } from "../api";
+import { ArrowUp, AlertTriangle, CheckCircle2, HelpCircle, ExternalLink, Download, RefreshCw, Package, ShieldCheck, ShieldAlert, Sparkles } from "lucide-react";
+import { fetchAlternatives, downloadReport, runAIDependencyCheck } from "../api";
 
 const RECOMMENDATION_COLORS = {
   version_upgrade: { color: "#00FF88", label: "Recommended Fixed Version" },
@@ -151,8 +151,23 @@ export default function SaferAlternativesView({ activeScan }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [downloadingReport, setDownloadingReport] = useState(null);
+  const [aiDeps, setAiDeps] = useState(null);
+  const [loadingAiDeps, setLoadingAiDeps] = useState(false);
 
   const scanId = activeScan?.report?.summary?.scan_id || activeScan?.summary?.scan_id || activeScan?.scan_id || activeScan?.report?.scan_id;
+
+  const handleAiCheck = async () => {
+    if (!scanId) return;
+    setLoadingAiDeps(true);
+    try {
+      const res = await runAIDependencyCheck(scanId);
+      setAiDeps(res);
+    } catch (e) {
+      setError(e.message || "AI dependency check failed");
+    } finally {
+      setLoadingAiDeps(false);
+    }
+  };
 
   useEffect(() => {
     if (!scanId) return;
@@ -212,6 +227,10 @@ export default function SaferAlternativesView({ activeScan }) {
             <Download size={14} />
             <span>{downloadingReport === "csv" ? "Downloading…" : "CSV Report"}</span>
           </button>
+          <button className="btn btn-secondary btn-sm" onClick={handleAiCheck} disabled={loadingAiDeps} style={{ borderColor: "rgba(0,245,255,0.4)", color: "#00F5FF" }}>
+            <Sparkles size={14} />
+            <span>{loadingAiDeps ? "Checking Latest..." : "AI Latest Dependency Check"}</span>
+          </button>
           <button className="btn btn-primary btn-sm" onClick={() => handleDownload("pdf")} disabled={!!downloadingReport}>
             <Download size={14} />
             <span>{downloadingReport === "pdf" ? "Downloading…" : "PDF Report"}</span>
@@ -270,6 +289,64 @@ export default function SaferAlternativesView({ activeScan }) {
       )}
 
       {alternatives.map((alt, i) => <AlternativeCard key={i} alt={alt} />)}
+
+      {/* AI Latest Dependency Check (Reference Only) */}
+      {aiDeps && (
+        <div className="glass-panel" style={{ padding: "1.5rem", marginTop: "1.5rem", border: "1px solid rgba(0, 245, 255, 0.25)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+            <div>
+              <h3 style={{ fontSize: "1.05rem", display: "flex", alignItems: "center", gap: "8px", margin: 0, color: "#00F5FF" }}>
+                <Sparkles size={18} />
+                AI Latest Dependency Reference Check
+              </h3>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
+                {aiDeps.note}
+              </p>
+            </div>
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem", textAlign: "left" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--border-color)", color: "var(--text-muted)" }}>
+                  <th style={{ padding: "0.6rem" }}>Package</th>
+                  <th style={{ padding: "0.6rem" }}>Current</th>
+                  <th style={{ padding: "0.6rem" }}>Latest PyPI</th>
+                  <th style={{ padding: "0.6rem" }}>OSV Status</th>
+                  <th style={{ padding: "0.6rem" }}>Reference Pin</th>
+                  <th style={{ padding: "0.6rem" }}>AI Reference Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(aiDeps.recommendations || []).map((r, idx) => (
+                  <tr key={idx} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <td style={{ padding: "0.6rem", fontWeight: 600 }}>
+                      <a href={r.pypi_url} target="_blank" rel="noreferrer" style={{ color: "#fff", textDecoration: "none" }}>
+                        {r.package_name} <ExternalLink size={11} style={{ display: "inline" }} />
+                      </a>
+                    </td>
+                    <td style={{ padding: "0.6rem", fontFamily: "var(--font-mono)" }}>v{r.current_version}</td>
+                    <td style={{ padding: "0.6rem", fontFamily: "var(--font-mono)", color: r.needs_update ? "#00FF88" : "var(--text-muted)" }}>
+                      v{r.latest_version}
+                    </td>
+                    <td style={{ padding: "0.6rem" }}>
+                      {r.osv_clean === true ? (
+                        <span style={{ color: "#00FF88", fontWeight: 600 }}>Clean (0 CVEs)</span>
+                      ) : r.osv_clean === false ? (
+                        <span style={{ color: "#FFB800", fontWeight: 600 }}>Has Advisories</span>
+                      ) : (
+                        <span style={{ color: "var(--text-muted)" }}>Unchecked</span>
+                      )}
+                    </td>
+                    <td style={{ padding: "0.6rem", fontFamily: "var(--font-mono)", color: "#38BDF8" }}>{r.suggested_pin}</td>
+                    <td style={{ padding: "0.6rem", color: "var(--text-muted)" }}>{r.ai_note}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
