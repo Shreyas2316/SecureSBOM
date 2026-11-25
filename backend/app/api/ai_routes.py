@@ -401,15 +401,15 @@ async def get_scan_alternatives(
 
     alternatives = await get_alternatives_for_scan(vuln_data)
 
-    # Persist alternatives to DB
+    # Batch-check existing alternatives in 1 query instead of N queries
+    existing_keys = {
+        (row.package_name, row.vulnerability_canonical_id, row.recommendation_type)
+        for row in db.query(DependencyAlternative).filter(DependencyAlternative.scan_id == scan_id).all()
+    }
     for alt in alternatives:
-        existing = db.query(DependencyAlternative).filter(
-            DependencyAlternative.scan_id == scan_id,
-            DependencyAlternative.package_name == alt.get("package_name"),
-            DependencyAlternative.vulnerability_canonical_id == alt.get("vulnerability_canonical_id"),
-            DependencyAlternative.recommendation_type == alt.get("recommendation_type"),
-        ).first()
-        if not existing:
+        k = (alt.get("package_name"), alt.get("vulnerability_canonical_id"), alt.get("recommendation_type"))
+        if k not in existing_keys:
+            existing_keys.add(k)
             da = DependencyAlternative(
                 scan_id=scan_id,
                 vulnerability_canonical_id=alt.get("vulnerability_canonical_id"),
@@ -465,41 +465,41 @@ async def ai_check_latest_dependencies(
 
     sem = asyncio.Semaphore(8)
 
-    async def _inspect_comp(c):
-        async with sem:
-            latest_info = await fetch_package_info(c.name, None)
-            latest_ver = (latest_info or {}).get("version")
-            osv_clean = None
-            if latest_ver:
-                try:
-                    async with httpx.AsyncClient(timeout=6.0) as client:
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        async def _inspect_comp(c):
+            async with sem:
+                latest_info = await fetch_package_info(c.name, None, client=client)
+                latest_ver = (latest_info or {}).get("version")
+                osv_clean = None
+                if latest_ver:
+                    try:
                         resp = await client.post(
                             "https://api.osv.dev/v1/query",
                             json={"package": {"name": c.name, "ecosystem": "PyPI"}, "version": latest_ver},
                         )
                         if resp.status_code == 200:
                             osv_clean = len(resp.json().get("vulns", [])) == 0
-                except Exception:
-                    pass
-            needs_update = bool(latest_ver and c.version and latest_ver != c.version)
-            return {
-                "package_name": c.name,
-                "current_version": c.version,
-                "latest_version": latest_ver or c.version,
-                "needs_update": needs_update,
-                "osv_clean": osv_clean,
-                "license": (latest_info or {}).get("license") or "Unknown",
-                "suggested_pin": f"{c.name}=={latest_ver or c.version}",
-                "pypi_url": f"https://pypi.org/project/{c.name}/{latest_ver or ''}/",
-                "ai_note": (
-                    f"AI Reference: Upgrade {c.name} from {c.version} to latest {latest_ver} "
-                    f"({'0 known OSV advisories' if osv_clean else 'verify advisories before upgrade'})."
-                    if needs_update
-                    else f"AI Reference: {c.name}=={c.version} is already on the latest PyPI release."
-                ),
-            }
+                    except Exception:
+                        pass
+                needs_update = bool(latest_ver and c.version and latest_ver != c.version)
+                return {
+                    "package_name": c.name,
+                    "current_version": c.version,
+                    "latest_version": latest_ver or c.version,
+                    "needs_update": needs_update,
+                    "osv_clean": osv_clean,
+                    "license": (latest_info or {}).get("license") or "Unknown",
+                    "suggested_pin": f"{c.name}=={latest_ver or c.version}",
+                    "pypi_url": f"https://pypi.org/project/{c.name}/{latest_ver or ''}/",
+                    "ai_note": (
+                        f"AI Reference: Upgrade {c.name} from {c.version} to latest {latest_ver} "
+                        f"({'0 known OSV advisories' if osv_clean else 'verify advisories before upgrade'})."
+                        if needs_update
+                        else f"AI Reference: {c.name}=={c.version} is already on the latest PyPI release."
+                    ),
+                }
 
-    recommendations = await asyncio.gather(*[_inspect_comp(c) for c in components])
+        recommendations = await asyncio.gather(*[_inspect_comp(c) for c in components])
     return {
         "scan_id": scan_id,
         "provider": settings.AI_PROVIDER if settings.AI_ENABLED else "ai-reference-advisor",

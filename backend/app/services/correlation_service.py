@@ -232,7 +232,8 @@ async def correlate_vulnerabilities(components: List[Dict[str, Any]]) -> Dict[st
                     if not details or details == summary:
                         details = d_text
 
-                    aff_r, fix_v = extract_remediation_info(raw_rec)
+                    # Extract remediation scoped to the current package
+                    aff_r, fix_v = extract_remediation_info(raw_rec, pkg_name=name)
                     if fix_v and not fixed_version:
                         fixed_version = fix_v
                     if aff_r and not affected_range:

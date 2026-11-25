@@ -68,23 +68,31 @@ def extract_references(vuln_raw: Dict[str, Any]) -> List[str]:
     return urls
 
 
-def extract_remediation_info(vuln_raw: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+def extract_remediation_info(vuln_raw: Dict[str, Any], pkg_name: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """
     Parse OSV `affected` data for introduced/fixed version events.
-    Returns (affected_range, fixed_version).
-    Does NOT invent versions — returns None if absent.
+    Filters by pkg_name (PEP 503 normalized) when available so fixed_version
+    always belongs to the scanned package. Does NOT invent versions.
     """
     affected_list = vuln_raw.get("affected", [])
     if not isinstance(affected_list, list):
         return None, None
 
+    norm_target = re.sub(r"[-_.]+", "-", pkg_name).lower() if pkg_name else None
+    matched_entries = []
+    if norm_target:
+        for aff in affected_list:
+            if isinstance(aff, dict):
+                p_name = (aff.get("package") or {}).get("name", "")
+                if p_name and re.sub(r"[-_.]+", "-", p_name).lower() == norm_target:
+                    matched_entries.append(aff)
+    if not matched_entries:
+        matched_entries = [a for a in affected_list if isinstance(a, dict)]
+
     fixed_version = None
     introduced_version = None
 
-    for aff in affected_list:
-        if not isinstance(aff, dict):
-            continue
-
+    for aff in matched_entries:
         ranges = aff.get("ranges", [])
         if isinstance(ranges, list):
             for r in ranges:
@@ -147,13 +155,19 @@ def extract_severity_and_cvss(vuln_raw: Dict[str, Any]) -> Tuple[Optional[float]
 
     severity_list = vuln_raw.get("severity", [])
     if isinstance(severity_list, list):
+        # Prefer CVSS_V3 (3.1/3.0) first, then fall back to CVSS_V2 or others
+        v3_vec = None
+        fallback_vec = None
         for sev in severity_list:
             if isinstance(sev, dict):
-                s_type = sev.get("type", "")
-                s_score = sev.get("score", "")
-                if "CVSS" in s_type and s_score:
-                    cvss_vector = s_score
+                s_type = str(sev.get("type", ""))
+                s_score = str(sev.get("score", ""))
+                if "CVSS_V3" in s_type or s_score.startswith("CVSS:3."):
+                    v3_vec = s_score
                     break
+                elif "CVSS" in s_type and s_score and not fallback_vec:
+                    fallback_vec = s_score
+        cvss_vector = v3_vec or fallback_vec
 
     db_specific = vuln_raw.get("database_specific", {})
     if isinstance(db_specific, dict):
